@@ -37,12 +37,15 @@ $(derivePrinterParsers ''Prefix)
 $(derivePrinterParsers ''CallOffset)
 $(derivePrinterParsers ''Substitution)
 
+-- | Demangle a name into a structured representation (or an error
+-- string)
 demangleName :: String -> Either String DecodedName
 demangleName s =
   case parseString itaniumName s of
     Right n -> Right n
     Left e -> Left (show e)
 
+-- | Re-mangle a name
 mangleName :: DecodedName -> Maybe String
 mangleName = unparseString itaniumName
 

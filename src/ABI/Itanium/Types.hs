@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 module ABI.Itanium.Types (
   DecodedName(..),
   CVQualifier(..),
@@ -12,6 +13,8 @@ module ABI.Itanium.Types (
   Substitution(..)
   ) where
 
+import Data.Data
+
 data DecodedName = Function Name [CXXType]
                  | Data Name
                  | VirtualTable CXXType
@@ -21,16 +24,16 @@ data DecodedName = Function Name [CXXType]
                  | GuardVariable Name
                  | OverrideThunk CallOffset DecodedName
                  | OverrideThunkCovariant CallOffset CallOffset DecodedName
-                 deriving (Eq, Show)
+                 deriving (Eq, Show, Data, Typeable)
 
 data CallOffset = VirtualOffset Int Int
                 | NonVirtualOffset Int
-                deriving (Eq, Show)
+                deriving (Eq, Show, Data, Typeable)
 
 data CVQualifier = Restrict
                  | Volatile
                  | Const
-                 deriving (Eq, Show)
+                 deriving (Eq, Show, Data, Typeable)
 
 data Substitution = Substitution (Maybe String)
                   | SubStdNamespace
@@ -40,7 +43,7 @@ data Substitution = Substitution (Maybe String)
                   | SubBasicIstream
                   | SubBasicOstream
                   | SubBasicIostream
-                  deriving (Eq, Show)
+                  deriving (Eq, Show, Data, Typeable)
 
 data CXXType = QualifiedType [CVQualifier] CXXType
              | PointerToType CXXType
@@ -92,17 +95,17 @@ data CXXType = QualifiedType [CVQualifier] CXXType
                -- ^ Class type, member type
              | ClassEnumType Name
              | SubstitutionType Substitution
-             deriving (Eq, Show)
+             deriving (Eq, Show, Data, Typeable)
 
 data Expression = Expression
-                deriving (Eq, Show)
+                deriving (Eq, Show, Data, Typeable)
 
 data Name = NestedName [CVQualifier] [Prefix] UnqualifiedName
 --          | NestedTemplateName [CVQualifier] TemplatePrefix TemplateArgs
           | UnscopedName UnqualifiedName
           | UnscopedStdName UnqualifiedName
             -- Still need unscoped-template-name and local-name
-          deriving (Eq, Show)
+          deriving (Eq, Show, Data, Typeable)
 
 {-
 <prefix> ::= <prefix> <unqualified-name>
@@ -120,7 +123,7 @@ This is currently massively incomplete
 data Prefix = DataMemberPrefix String
             | UnqualifiedPrefix UnqualifiedName
             | SubstitutionPrefix Substitution
-            deriving (Eq, Show)
+            deriving (Eq, Show, Data, Typeable)
 
 -- data TemplatePrefix = TemplatePrefix deriving (Eq, Show)
 -- data TemplateArgs = TemplateArgs deriving (Eq, Show)
@@ -129,7 +132,7 @@ data UnqualifiedName = OperatorName Operator
                      | CtorDtorName CtorDtor
                      | SourceName String
                      -- | UnnamedTypeName String
-                     deriving (Eq, Show)
+                     deriving (Eq, Show, Data, Typeable)
 
 data CtorDtor = C1 -- Complete object constructor
               | C2 -- Base object constructor
@@ -137,7 +140,7 @@ data CtorDtor = C1 -- Complete object constructor
               | D0 -- Deleting destructor
               | D1 -- Complete object destructor
               | D2 -- Base object destructor
-              deriving (Eq, Show)
+              deriving (Eq, Show, Data, Typeable)
 
 data Operator = OpNew -- new
               | OpNewArray -- new[]
@@ -192,4 +195,4 @@ data Operator = OpNew -- new
               | OpAlignofExpr
               | OpCast CXXType
               | OpVendor Int String
-              deriving (Eq, Show)
+              deriving (Eq, Show, Data, Typeable)

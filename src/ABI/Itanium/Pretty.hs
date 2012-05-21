@@ -100,10 +100,60 @@ showName n =
       case null qs of
         False -> return $! mconcat [ pn, singleton ' ', showQualifiers qs ]
         True -> return $! pn
-    UnscopedName uname -> showUnqualifiedName uname
-    UnscopedStdName uname -> do
+    UnscopedName uname -> showUName uname
+    NestedTemplateName [] pfxs targs ->
+      showPrefixedTArgs pfxs targs
+    NestedTemplateName qs pfxs targs -> do
+      pn <- showPrefixedTArgs pfxs targs
+      return $! mconcat [ pn, singleton ' ', showQualifiers qs ]
+    UnscopedTemplateName uname targs -> do
+      un <- showUName uname
+      recordSubstitution un
+      tns <- showTArgs targs
+      return $! mconcat [ un, singleton '<'
+                        , tns
+                        , singleton '>'
+                        ]
+    UnscopedTemplateSubstitution s targs -> do
+      ss <- showSubstitution s
+      tns <- showTArgs targs
+      return $! mconcat [ ss, singleton '<', tns, singleton '>' ]
+
+showUName :: UName -> Pretty Builder
+showUName u =
+  case u of
+    UName uname -> showUnqualifiedName uname
+    UStdName uname -> do
       un <- showUnqualifiedName uname
       return (fromString "std::" `mappend` un)
+
+showTArgs :: [TemplateArg] -> Pretty Builder
+showTArgs targs = do
+  tns <- mapM showTArg targs
+  return $! mconcat $! intersperse (fromString ", ") tns
+
+showPrefixedTArgs :: [Prefix] -> [TemplateArg] -> Pretty Builder
+showPrefixedTArgs = go mempty
+  where
+    go acc pfxs targs =
+      case pfxs of
+        [] -> do
+          tns <- mapM showTArg targs
+          return $! mconcat [ acc, singleton '<'
+                            , mconcat $ intersperse (fromString ", ") tns
+                            , singleton '>' ]
+        pfx : rest -> do
+          px <- showPrefix pfx
+          let nextAcc = case acc == mempty of
+                False -> mconcat [ acc, fromString "::", px ]
+                True -> px
+          recordSubstitution nextAcc
+          go nextAcc rest targs
+
+showTArg :: TemplateArg -> Pretty Builder
+showTArg ta =
+  case ta of
+    TypeTemplateArg t -> showType t
 
 -- pass the current prefix builder down so that it can be added to and
 -- stored for substitutions

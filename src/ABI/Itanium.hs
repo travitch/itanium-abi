@@ -36,6 +36,9 @@ $(derivePrinterParsers ''UnqualifiedName)
 $(derivePrinterParsers ''Prefix)
 $(derivePrinterParsers ''CallOffset)
 $(derivePrinterParsers ''Substitution)
+$(derivePrinterParsers ''UName)
+$(derivePrinterParsers ''TemplateArg)
+$(derivePrinterParsers ''TemplateParam)
 
 -- | Demangle a name into a structured representation (or an error
 -- string)
@@ -92,7 +95,7 @@ cxxType = ( rQualifiedType . rList1 cvQualifier . cxxType <>
             rUnsignedShortType . lit "t" <>
             rIntType . lit "i" <>
             rUnsignedIntType . lit "j" <>
-            rLongType . lit "k" <>
+            rLongType . lit "l" <>
             rUnsignedLongType . lit "m" <>
             rLongLongType . lit "x" <>
             rUnsignedLongLongType . lit "y" <>
@@ -114,7 +117,7 @@ cxxType = ( rQualifiedType . rList1 cvQualifier . cxxType <>
             rPtrToMemberType . lit "M" . cxxType . cxxType <>
             rSubstitutionType . substitution <>
             rClassEnumType . name
-            -- Still need: array-type (E), decltype, substitution
+            -- Still need: array-type (E), decltype
           )
 
 bareFunctionType :: PrinterParser StringError String a ([CXXType] :- a)
@@ -203,17 +206,19 @@ unqualifiedName = ( rOperatorName . operator <>
                   )
 
 prefix :: PrinterParser StringError String a (Prefix :- a)
-prefix = ( rUnqualifiedPrefix . unqualifiedName <>
-           rDataMemberPrefix . sourceName . lit "M" <>
-           rSubstitutionPrefix . substitution
+prefix = ( rDataMemberPrefix . sourceName . lit "M" <>
+           rUnqualifiedPrefix . unqualifiedName <>
+           rSubstitutionPrefix . substitution <>
+           rTemplateParamPrefix . templateParam <>
+           rTemplateArgsPrefix . templateArgs
          )
 
 name :: PrinterParser StringError String a (Name :- a)
-name = ( rNestedName . lit "N" . rList cvQualifier . rList prefix . unqualifiedName . lit "E" <>
-         -- Standard qualified names do not require the N..E
-         -- delimiters, so this case is *not* redundant
-         rUnscopedStdName . lit "St" . unqualifiedName <>
-         rUnscopedName . unqualifiedName
+name = ( rNestedName . lit "N" . rList cvQualifier . rList1 prefix . unqualifiedName . lit "E" <>
+         rNestedTemplateName . lit "N" . rList cvQualifier . rList1 prefix . templateArgs . lit "E" <>
+         rUnscopedTemplateName . unscopedName . templateArgs <>
+         rUnscopedTemplateSubstitution . substitution . templateArgs <>
+         rUnscopedName . unscopedName
        )
 
 substitution :: PrinterParser StringError String a (Substitution :- a)
@@ -226,6 +231,20 @@ substitution = ( rSubstitution . lit "S" . rMaybe (rList1 (satisfy (/='_'))) . l
                  rSubBasicOstream . lit "So" <>
                  rSubBasicIostream . lit "Sd"
                )
+
+unscopedName :: PrinterParser StringError String a (UName :- a)
+unscopedName = ( rUStdName . lit "St" . unqualifiedName <>
+                 rUName . unqualifiedName
+               )
+
+templateArgs :: PrinterParser StringError String a ([TemplateArg] :- a)
+templateArgs = rList1 (lit "I" . templateArg . lit "E")
+
+templateArg :: PrinterParser StringError String a (TemplateArg :- a)
+templateArg = rTypeTemplateArg . cxxType
+
+templateParam :: PrinterParser StringError String a (TemplateParam :- a)
+templateParam = ( rTemplateParam . lit "T" . rMaybe int . lit "_" )
 
 -- | Parse a length-prefixed string (does not handle newlines)
 sourceName :: PrinterParser (ParserError MajorMinorPos) String a (String :- a)

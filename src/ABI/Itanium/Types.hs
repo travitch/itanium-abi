@@ -6,11 +6,14 @@ module ABI.Itanium.Types (
   Name(..),
   Prefix(..),
   UnqualifiedName(..),
+  UName(..),
   CtorDtor(..),
   Operator(..),
   Expression(..),
   CallOffset(..),
-  Substitution(..)
+  Substitution(..),
+  TemplateArg(..),
+  TemplateParam(..)
   ) where
 
 import Data.Data
@@ -95,17 +98,25 @@ data CXXType = QualifiedType [CVQualifier] CXXType
                -- ^ Class type, member type
              | ClassEnumType Name
              | SubstitutionType Substitution
+             | TemplateParamType TemplateParam
+             | TemplateTemplateParamType TemplateParam [TemplateArg]
+             | TemplateTemplateParamSubstitutionType Substitution [TemplateArg]
              deriving (Eq, Show, Data, Typeable)
 
 data Expression = Expression
                 deriving (Eq, Show, Data, Typeable)
 
 data Name = NestedName [CVQualifier] [Prefix] UnqualifiedName
---          | NestedTemplateName [CVQualifier] TemplatePrefix TemplateArgs
-          | UnscopedName UnqualifiedName
-          | UnscopedStdName UnqualifiedName
-            -- Still need unscoped-template-name and local-name
+          | NestedTemplateName [CVQualifier] [Prefix] [TemplateArg]
+          | UnscopedName UName
+          | UnscopedTemplateName UName [TemplateArg]
+          | UnscopedTemplateSubstitution Substitution [TemplateArg]
+            -- Still need local-name
           deriving (Eq, Show, Data, Typeable)
+
+data UName = UName UnqualifiedName
+           | UStdName UnqualifiedName
+           deriving (Eq, Show, Data, Typeable)
 
 {-
 <prefix> ::= <prefix> <unqualified-name>
@@ -123,10 +134,15 @@ This is currently massively incomplete
 data Prefix = DataMemberPrefix String
             | UnqualifiedPrefix UnqualifiedName
             | SubstitutionPrefix Substitution
+            | TemplateParamPrefix TemplateParam
+            | TemplateArgsPrefix [TemplateArg]
             deriving (Eq, Show, Data, Typeable)
 
--- data TemplatePrefix = TemplatePrefix deriving (Eq, Show)
--- data TemplateArgs = TemplateArgs deriving (Eq, Show)
+data TemplateArg = TypeTemplateArg CXXType
+                 deriving (Eq, Show, Data, Typeable)
+
+data TemplateParam = TemplateParam (Maybe Int)
+                   deriving (Eq, Show, Data, Typeable)
 
 data UnqualifiedName = OperatorName Operator
                      | CtorDtorName CtorDtor

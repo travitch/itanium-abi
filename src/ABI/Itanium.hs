@@ -238,7 +238,7 @@ unscopedName = ( rUStdName . lit "St" . unqualifiedName <>
                )
 
 templateArgs :: PrinterParser StringError String a ([TemplateArg] :- a)
-templateArgs = rList1 (lit "I" . templateArg . lit "E")
+templateArgs = lit "I" . rList1 templateArg . lit "E"
 
 templateArg :: PrinterParser StringError String a (TemplateArg :- a)
 templateArg = rTypeTemplateArg . cxxType

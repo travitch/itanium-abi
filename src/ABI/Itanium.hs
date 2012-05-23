@@ -11,6 +11,7 @@ module ABI.Itanium (
   Expression(..),
   CallOffset(..),
   Substitution(..),
+  UName(..),
   demangleName,
   mangleName,
   cxxNameToString,

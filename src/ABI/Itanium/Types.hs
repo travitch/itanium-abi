@@ -27,16 +27,16 @@ data DecodedName = Function Name [CXXType]
                  | GuardVariable Name
                  | OverrideThunk CallOffset DecodedName
                  | OverrideThunkCovariant CallOffset CallOffset DecodedName
-                 deriving (Eq, Show, Data, Typeable)
+                 deriving (Eq, Ord, Show, Data, Typeable)
 
 data CallOffset = VirtualOffset Int Int
                 | NonVirtualOffset Int
-                deriving (Eq, Show, Data, Typeable)
+                deriving (Eq, Ord, Show, Data, Typeable)
 
 data CVQualifier = Restrict
                  | Volatile
                  | Const
-                 deriving (Eq, Show, Data, Typeable)
+                 deriving (Eq, Ord, Show, Data, Typeable)
 
 data Substitution = Substitution (Maybe String)
                   | SubStdNamespace
@@ -46,7 +46,7 @@ data Substitution = Substitution (Maybe String)
                   | SubBasicIstream
                   | SubBasicOstream
                   | SubBasicIostream
-                  deriving (Eq, Show, Data, Typeable)
+                  deriving (Eq, Ord, Show, Data, Typeable)
 
 data CXXType = QualifiedType [CVQualifier] CXXType
              | PointerToType CXXType
@@ -101,10 +101,10 @@ data CXXType = QualifiedType [CVQualifier] CXXType
              | TemplateParamType TemplateParam
              | TemplateTemplateParamType TemplateParam [TemplateArg]
              | TemplateTemplateParamSubstitutionType Substitution [TemplateArg]
-             deriving (Eq, Show, Data, Typeable)
+             deriving (Eq, Ord, Show, Data, Typeable)
 
 data Expression = Expression
-                deriving (Eq, Show, Data, Typeable)
+                deriving (Eq, Ord, Show, Data, Typeable)
 
 data Name = NestedName [CVQualifier] [Prefix] UnqualifiedName
           | NestedTemplateName [CVQualifier] [Prefix] [TemplateArg]
@@ -112,11 +112,11 @@ data Name = NestedName [CVQualifier] [Prefix] UnqualifiedName
           | UnscopedTemplateName UName [TemplateArg]
           | UnscopedTemplateSubstitution Substitution [TemplateArg]
             -- Still need local-name
-          deriving (Eq, Show, Data, Typeable)
+          deriving (Eq, Ord, Show, Data, Typeable)
 
 data UName = UName UnqualifiedName
            | UStdName UnqualifiedName
-           deriving (Eq, Show, Data, Typeable)
+           deriving (Eq, Ord, Show, Data, Typeable)
 
 {-
 <prefix> ::= <prefix> <unqualified-name>
@@ -136,19 +136,19 @@ data Prefix = DataMemberPrefix String
             | SubstitutionPrefix Substitution
             | TemplateParamPrefix TemplateParam
             | TemplateArgsPrefix [TemplateArg]
-            deriving (Eq, Show, Data, Typeable)
+            deriving (Eq, Ord, Show, Data, Typeable)
 
 data TemplateArg = TypeTemplateArg CXXType
-                 deriving (Eq, Show, Data, Typeable)
+                 deriving (Eq, Ord, Show, Data, Typeable)
 
 data TemplateParam = TemplateParam (Maybe Int)
-                   deriving (Eq, Show, Data, Typeable)
+                   deriving (Eq, Ord, Show, Data, Typeable)
 
 data UnqualifiedName = OperatorName Operator
                      | CtorDtorName CtorDtor
                      | SourceName String
                      -- | UnnamedTypeName String
-                     deriving (Eq, Show, Data, Typeable)
+                     deriving (Eq, Ord, Show, Data, Typeable)
 
 data CtorDtor = C1 -- Complete object constructor
               | C2 -- Base object constructor
@@ -156,7 +156,7 @@ data CtorDtor = C1 -- Complete object constructor
               | D0 -- Deleting destructor
               | D1 -- Complete object destructor
               | D2 -- Base object destructor
-              deriving (Eq, Show, Data, Typeable)
+              deriving (Eq, Ord, Show, Data, Typeable)
 
 data Operator = OpNew -- new
               | OpNewArray -- new[]
@@ -211,4 +211,4 @@ data Operator = OpNew -- new
               | OpAlignofExpr
               | OpCast CXXType
               | OpVendor Int String
-              deriving (Eq, Show, Data, Typeable)
+              deriving (Eq, Ord, Show, Data, Typeable)

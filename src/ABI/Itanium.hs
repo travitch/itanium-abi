@@ -15,7 +15,14 @@ module ABI.Itanium (
   demangleName,
   mangleName,
   cxxNameToString,
-  cxxNameToText
+  cxxNameToText,
+  -- * Generated parsers
+  rUnqualifiedPrefix,
+  rConst,
+  rSourceName,
+  rUName,
+  rNestedName,
+  rUnscopedName
   ) where
 
 import Prelude hiding ( (.) )

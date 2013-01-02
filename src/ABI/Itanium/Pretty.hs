@@ -8,6 +8,7 @@ import Data.Char ( digitToInt )
 import Data.List ( foldl', intersperse )
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
+import Data.Maybe ( fromMaybe )
 import Data.Monoid
 import Data.Text.Lazy ( Text, unpack )
 import Data.Text.Lazy.Builder
@@ -30,14 +31,15 @@ getSubstitution :: Maybe String -> Pretty Builder
 getSubstitution s = do
   st <- get
   case s of
-    Nothing -> return $! HM.lookupDefault errMsg 0 st
+    Nothing -> return $! lookupError 0 st
     -- This case always adds 1 from the number because the
     -- Nothing case is index zero
     Just ix ->
       let n = numberValue 36 ix
-      in return $! HM.lookupDefault errMsg (n + 1) st
+      in return $! lookupError (n+1) st
   where
     errMsg = error ("No substitution found for " ++ show s)
+    lookupError k m = fromMaybe errMsg (HM.lookup k m)
 
 cxxNameToText :: DecodedName -> Text
 cxxNameToText n = toLazyText $ evalState (dispatchTopLevel n) mempty

@@ -147,7 +147,7 @@ data TemplateParam = TemplateParam (Maybe Int)
 data UnqualifiedName = OperatorName Operator
                      | CtorDtorName CtorDtor
                      | SourceName String
-                     -- | UnnamedTypeName String
+                     -- UnnamedTypeName String
                      deriving (Eq, Ord, Show, Data, Typeable)
 
 data CtorDtor = C1 -- Complete object constructor
@@ -158,24 +158,24 @@ data CtorDtor = C1 -- Complete object constructor
               | D2 -- Base object destructor
               deriving (Eq, Ord, Show, Data, Typeable)
 
-data Operator = OpNew -- new
-              | OpNewArray -- new[]
-              | OpDelete -- delete
-              | OpDeleteArray -- delete[]
-              | OpUPlus -- + (unary)
-              | OpUMinus -- - (unary)
-              | OpAddressOf -- & (unary)
-              | OpDeref -- * (unary)
-              | OpBitNot -- ~
-              | OpPlus -- +
-              | OpMinus -- -
-              | OpMul -- *
-              | OpDiv -- /
-              | OpMod -- %
-              | OpBitAnd -- &
-              | OpBitOr -- \|
-              | OpBitXor -- \^
-              | OpAssign -- =
+data Operator = OpNew           -- ^ new
+              | OpNewArray      -- ^ new[]
+              | OpDelete        -- ^ delete
+              | OpDeleteArray   -- ^ delete[]
+              | OpUPlus         -- ^ + (unary)
+              | OpUMinus        -- ^ - (unary)
+              | OpAddressOf     -- ^ & (unary)
+              | OpDeref         -- ^ * (unary)
+              | OpBitNot        -- ^ ~
+              | OpPlus          -- ^ +
+              | OpMinus         -- ^ -
+              | OpMul           -- ^ *
+              | OpDiv           -- ^ /
+              | OpMod           -- ^ %
+              | OpBitAnd        -- ^ &
+              | OpBitOr         -- ^ \|
+              | OpBitXor        -- ^ \^
+              | OpAssign        -- ^ =
               | OpPlusAssign
               | OpMinusAssign
               | OpMulAssign

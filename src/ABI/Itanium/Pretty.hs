@@ -3,7 +3,7 @@ module ABI.Itanium.Pretty (
   cxxNameToText
   ) where
 
-import Control.Monad.State.Strict
+import Control.Monad.Trans.State.Strict
 import Data.Char ( digitToInt )
 import Data.List ( foldl', intersperse )
 import Data.HashMap.Strict ( HashMap )

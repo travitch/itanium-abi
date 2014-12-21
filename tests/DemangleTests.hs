@@ -19,7 +19,7 @@ mkTestCase (sym, expected) = testCase sym $ do
 main :: IO ()
 main = do
   inputs <- IO.readFile "tests/test-cases.txt"
-  expecteds <- readProcess "demangle" [] inputs
+  expecteds <- readProcess "c++filt" [] inputs
   let symbols = zip (lines inputs) (lines expecteds)
       tests = [ testGroup "QtGUI" (map mkTestCase symbols) ]
   defaultMain tests

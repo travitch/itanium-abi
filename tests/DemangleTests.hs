@@ -12,9 +12,10 @@ mkTestCase :: (String, String) -> Test
 mkTestCase (sym, expected) = testCase sym $ do
   case demangleName sym of
     Left err -> assertFailure (sym ++ " : " ++ err)
-    Right dname -> do
-      let oracle = filter (/= '\n') expected
-      assertEqual sym oracle (cxxNameToString dname)
+    Right dname ->
+      assertEqual sym (normalize expected) (normalize (cxxNameToString dname))
+  where
+    normalize = filter (`notElem` " \n")
 
 main :: IO ()
 main = do
@@ -23,3 +24,5 @@ main = do
   let symbols = zip (lines inputs) (lines expecteds)
       tests = [ testGroup "QtGUI" (map mkTestCase symbols) ]
   defaultMain tests
+
+

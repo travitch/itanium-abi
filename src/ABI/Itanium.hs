@@ -34,19 +34,19 @@ import Text.Boomerang.TH
 import ABI.Itanium.Pretty
 import ABI.Itanium.Types
 
-$(derivePrinterParsers ''DecodedName)
-$(derivePrinterParsers ''Name)
-$(derivePrinterParsers ''CVQualifier)
-$(derivePrinterParsers ''CXXType)
-$(derivePrinterParsers ''Operator)
-$(derivePrinterParsers ''CtorDtor)
-$(derivePrinterParsers ''UnqualifiedName)
-$(derivePrinterParsers ''Prefix)
-$(derivePrinterParsers ''CallOffset)
-$(derivePrinterParsers ''Substitution)
-$(derivePrinterParsers ''UName)
-$(derivePrinterParsers ''TemplateArg)
-$(derivePrinterParsers ''TemplateParam)
+$(makeBoomerangs ''DecodedName)
+$(makeBoomerangs ''Name)
+$(makeBoomerangs ''CVQualifier)
+$(makeBoomerangs ''CXXType)
+$(makeBoomerangs ''Operator)
+$(makeBoomerangs ''CtorDtor)
+$(makeBoomerangs ''UnqualifiedName)
+$(makeBoomerangs ''Prefix)
+$(makeBoomerangs ''CallOffset)
+$(makeBoomerangs ''Substitution)
+$(makeBoomerangs ''UName)
+$(makeBoomerangs ''TemplateArg)
+$(makeBoomerangs ''TemplateParam)
 
 -- | Demangle a name into a structured representation (or an error
 -- string)
@@ -60,10 +60,10 @@ demangleName s =
 mangleName :: DecodedName -> Maybe String
 mangleName = unparseString itaniumName
 
-itaniumName :: StringPrinterParser () (DecodedName :- ())
+itaniumName :: StringBoomerang () (DecodedName :- ())
 itaniumName = lit "_Z" . topLevelEntity
 
-topLevelEntity :: PrinterParser StringError String a (DecodedName :- a)
+topLevelEntity :: Boomerang StringError String a (DecodedName :- a)
 topLevelEntity =
   ( rVirtualTable . lit "TV" . cxxType <>
     rVTTStructure . lit "TT" . cxxType <>
@@ -84,7 +84,7 @@ topLevelEntity =
 -- <unnamed-type-name> ::= Ut [ <nonnegative number> ] _
 -- <decltype>  ::= Dt <expression> E  # decltype of an id-expression or class member access (C++0x)
 --             ::= DT <expression> E  # decltype of an expression (C++0x)
-cxxType :: PrinterParser StringError String a (CXXType :- a)
+cxxType :: Boomerang StringError String a (CXXType :- a)
 cxxType = ( rQualifiedType . rList1 cvQualifier . cxxType <>
             rPointerToType . lit "P" . cxxType <>
             rReferenceToType . lit "R" . cxxType <>
@@ -128,21 +128,21 @@ cxxType = ( rQualifiedType . rList1 cvQualifier . cxxType <>
             -- Still need: array-type (E), decltype
           )
 
-bareFunctionType :: PrinterParser StringError String a ([CXXType] :- a)
+bareFunctionType :: Boomerang StringError String a ([CXXType] :- a)
 bareFunctionType = rList1 cxxType
 
-callOffset :: PrinterParser StringError String a (CallOffset :- a)
+callOffset :: Boomerang StringError String a (CallOffset :- a)
 callOffset = ( rVirtualOffset . lit "v" . abiInt . lit "_" . abiInt . lit "_" <>
                rNonVirtualOffset . lit "h" . abiInt . lit "_"
              )
 
-cvQualifier :: PrinterParser StringError String a (CVQualifier :- a)
+cvQualifier :: Boomerang StringError String a (CVQualifier :- a)
 cvQualifier = ( rRestrict . lit "r" <>
                 rVolatile . lit "V" <>
                 rConst . lit "K"
               )
 
-operator :: PrinterParser StringError String a (Operator :- a)
+operator :: Boomerang StringError String a (Operator :- a)
 operator = ( rOpNew . lit "nw" <>
              rOpNewArray . lit "na" <>
              rOpDelete . lit "dl" <>
@@ -198,7 +198,7 @@ operator = ( rOpNew . lit "nw" <>
              rOpVendor . lit "v" . abiInt . sourceName
            )
 
-ctorDtor :: PrinterParser StringError String a (CtorDtor :- a)
+ctorDtor :: Boomerang StringError String a (CtorDtor :- a)
 ctorDtor = ( rC1 . lit "C1" <>
              rC2 . lit "C2" <>
              rC3 . lit "C3" <>
@@ -207,13 +207,13 @@ ctorDtor = ( rC1 . lit "C1" <>
              rD2 . lit "D2"
            )
 
-unqualifiedName :: PrinterParser StringError String a (UnqualifiedName :- a)
+unqualifiedName :: Boomerang StringError String a (UnqualifiedName :- a)
 unqualifiedName = ( rOperatorName . operator <>
                     rCtorDtorName . ctorDtor <>
                     rSourceName . sourceName
                   )
 
-prefix :: PrinterParser StringError String a (Prefix :- a)
+prefix :: Boomerang StringError String a (Prefix :- a)
 prefix = ( rDataMemberPrefix . sourceName . lit "M" <>
            rUnqualifiedPrefix . unqualifiedName <>
            rSubstitutionPrefix . substitution <>
@@ -221,7 +221,7 @@ prefix = ( rDataMemberPrefix . sourceName . lit "M" <>
            rTemplateArgsPrefix . templateArgs
          )
 
-name :: PrinterParser StringError String a (Name :- a)
+name :: Boomerang StringError String a (Name :- a)
 name = ( rNestedName . lit "N" . rList cvQualifier . rList1 prefix . unqualifiedName . lit "E" <>
          rNestedTemplateName . lit "N" . rList cvQualifier . rList1 prefix . templateArgs . lit "E" <>
          rUnscopedTemplateName . unscopedName . templateArgs <>
@@ -229,7 +229,7 @@ name = ( rNestedName . lit "N" . rList cvQualifier . rList1 prefix . unqualified
          rUnscopedName . unscopedName
        )
 
-substitution :: PrinterParser StringError String a (Substitution :- a)
+substitution :: Boomerang StringError String a (Substitution :- a)
 substitution = ( rSubstitution . lit "S" . rMaybe (rList1 (satisfy (/='_'))) . lit "_" <>
                  rSubStdNamespace . lit "St" <>
                  rSubStdAllocator . lit "Sa" <>
@@ -240,22 +240,22 @@ substitution = ( rSubstitution . lit "S" . rMaybe (rList1 (satisfy (/='_'))) . l
                  rSubBasicIostream . lit "Sd"
                )
 
-unscopedName :: PrinterParser StringError String a (UName :- a)
+unscopedName :: Boomerang StringError String a (UName :- a)
 unscopedName = ( rUStdName . lit "St" . unqualifiedName <>
                  rUName . unqualifiedName
                )
 
-templateArgs :: PrinterParser StringError String a ([TemplateArg] :- a)
+templateArgs :: Boomerang StringError String a ([TemplateArg] :- a)
 templateArgs = lit "I" . rList1 templateArg . lit "E"
 
-templateArg :: PrinterParser StringError String a (TemplateArg :- a)
+templateArg :: Boomerang StringError String a (TemplateArg :- a)
 templateArg = rTypeTemplateArg . cxxType
 
-templateParam :: PrinterParser StringError String a (TemplateParam :- a)
+templateParam :: Boomerang StringError String a (TemplateParam :- a)
 templateParam = ( rTemplateParam . lit "T" . rMaybe int . lit "_" )
 
 -- | Parse a length-prefixed string (does not handle newlines)
-sourceName :: PrinterParser (ParserError MajorMinorPos) String a (String :- a)
+sourceName :: Boomerang (ParserError MajorMinorPos) String a (String :- a)
 sourceName = val pf sf
   where
     pf = Parser $ \tok pos ->
@@ -281,7 +281,7 @@ parseInt s =
 -- | In the Itanium ABI, negative numbers are prefixed by 'n' instead
 -- of a negative sign.  This is an alternate parser to be used instead
 -- of the 'int' parser that comes with boomerang.
-abiInt :: PrinterParser (ParserError MajorMinorPos) String a (Int :- a)
+abiInt :: Boomerang (ParserError MajorMinorPos) String a (Int :- a)
 abiInt = val pf sf
   where
     pf = Parser $ \tok pos ->

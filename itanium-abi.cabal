@@ -38,3 +38,7 @@ test-suite DemangleTests
   build-depends: itanium-abi, base > 3 && < 5, process,
                  test-framework, test-framework-hunit, HUnit
   ghc-options: -Wall
+
+source-repository head
+  type: git
+  location: https://github.com/travitch/itanium-abi

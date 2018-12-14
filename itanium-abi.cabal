@@ -16,6 +16,7 @@ description: Currently supports everything in the standard but templates
              and C++11.  Support for these will be added.  Includes a name
              mangler, demangler, and pretty printer.
 -- copyright:
+extra-source-files: tests/test-cases.txt
 
 library
   default-language: Haskell2010

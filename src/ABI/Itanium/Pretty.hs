@@ -5,6 +5,7 @@ module ABI.Itanium.Pretty (
 
 import Control.Monad.Trans.State.Strict
 import Data.Char ( digitToInt )
+import Data.Functor ( (<&>) )
 import Data.List ( foldl', intersperse )
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
@@ -146,10 +147,7 @@ showPrefixedTArgs = go mempty
                             , mconcat $ intersperse (fromString ", ") tns
                             , singleton '>' ]
         pfx : rest -> do
-          px <- showPrefix pfx
-          let nextAcc = case acc == mempty of
-                False -> mconcat [ acc, fromString "::", px ]
-                True -> px
+          nextAcc <- showPrefix acc pfx
           recordSubstitution nextAcc
           go nextAcc rest targs
 
@@ -189,10 +187,7 @@ showPrefixedName = go mempty
           recordSubstitution sub
           return $! mconcat [ curPfx, fromString className, inFix, fromString className ]
         (outerPfx : innerPfxs, _) -> do
-          px <- showPrefix outerPfx
-          let nextAcc = case acc == mempty of
-                False -> mconcat [ acc, fromString "::", px ]
-                True -> px
+          nextAcc <- showPrefix acc outerPfx
           recordSubstitution nextAcc
           go nextAcc innerPfxs uname
         ([], CtorDtorName _) -> error "Illegal fallthrough in constructor/destructor case"
@@ -222,12 +217,19 @@ showQualifier q =
 
 -- | These are outer namespace/class name qualifiers, so convert them
 -- to strings followed by ::
-showPrefix :: Prefix -> Pretty Builder
-showPrefix pfx =
-  case pfx of
-    DataMemberPrefix s -> return $! fromString s
-    UnqualifiedPrefix uname -> showUnqualifiedName uname
-    SubstitutionPrefix s -> showSubstitution s
+showPrefix :: Builder -> Prefix -> Pretty Builder
+showPrefix prior pfx =
+  let addPrior toThis = case prior == mempty of
+                          False -> mconcat [ prior, fromString "::", toThis ]
+                          True -> toThis
+  in case pfx of
+       DataMemberPrefix s -> addPrior <$> (return $! fromString s)
+       UnqualifiedPrefix uname -> addPrior <$> showUnqualifiedName uname
+       SubstitutionPrefix s -> addPrior <$> showSubstitution s
+       TemplateArgsPrefix args -> showPrefixedTArgs [] args <&>
+                                  case prior == mempty of
+                                    False -> \toThis -> mconcat [ prior, toThis ]
+                                    True -> id
 
 showUnqualifiedName :: UnqualifiedName -> Pretty Builder
 showUnqualifiedName uname =

@@ -14020,3 +14020,4 @@ _ZrsR11QDataStreamR9QVector2D
 _ZrsR11QDataStreamR9QVector3D
 _ZrsR11QDataStreamR9QVector4D
 _ZrsR11QTextStreamR9QSplitter
+_ZL13testconstdata

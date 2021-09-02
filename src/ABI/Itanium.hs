@@ -72,6 +72,7 @@ topLevelEntity =
     rGuardVariable . lit "GV" . name <>
     rOverrideThunk . lit "T" . callOffset . topLevelEntity <>
     rOverrideThunkCovariant . lit "Tc" . callOffset . callOffset . topLevelEntity <>
+    rConstStructData . lit "L" . unqualifiedName <>
     rFunction . name . bareFunctionType <>
     rData . name
   )

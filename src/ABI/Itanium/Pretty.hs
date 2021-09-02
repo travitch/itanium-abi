@@ -71,6 +71,7 @@ dispatchTopLevel n =
                         , mconcat $ intersperse (fromString ", ") argBuilders
                         , singleton ')'
                         ]
+    ConstStructData varName -> showUnqualifiedName varName
     Data varName -> showName varName
     VirtualTable t -> do
       tb <- showType t

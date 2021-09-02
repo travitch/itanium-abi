@@ -13,7 +13,7 @@ against that of the _demangle_ tool included with binutils.  It looks
 like everything that should pass does.
 
 The implementation conforms to the specification detailed at
-[codesourcery](http://sourcery.mentor.com/public/cxx-abi/abi.html).
+[codesourcery](https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling).
 It is built using
 [boomerang](http://hackage.haskell.org/package/boomerang) to construct
 the parser and unparser from a single specification.

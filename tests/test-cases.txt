@@ -14022,3 +14022,4 @@ _ZrsR11QDataStreamR9QVector4D
 _ZrsR11QTextStreamR9QSplitter
 _ZL13testconstdata
 _ZN4uorbIvE9uorb_copyEPK12orb_metadataiPv
+_ZN4uorbIvEC2Ei

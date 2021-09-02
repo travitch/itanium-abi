@@ -186,6 +186,18 @@ showPrefixedName = go mempty
               sub = curPfx `mappend` fromString className
           recordSubstitution sub
           return $! mconcat [ curPfx, fromString className, inFix, fromString className ]
+        ([UnqualifiedPrefix (SourceName className), tmplPfx@(TemplateArgsPrefix{})], CtorDtorName cd) -> do
+          let prevPfx here = case acc == mempty of
+                               True -> here
+                               False -> mconcat [ acc, fromString "::", here ]
+          nextAcc <- showPrefix (prevPfx $ fromString className) tmplPfx
+          let inFix = case isDestructor cd of
+                False -> fromString "::"
+                True -> fromString "::~"
+          recordSubstitution nextAcc
+          let cd = mconcat [ nextAcc, inFix, fromString className ]
+          recordSubstitution cd
+          return $! cd
         (outerPfx : innerPfxs, _) -> do
           nextAcc <- showPrefix acc outerPfx
           recordSubstitution nextAcc

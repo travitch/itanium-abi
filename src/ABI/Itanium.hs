@@ -218,6 +218,7 @@ prefix :: Boomerang StringError String a (Prefix :- a)
 prefix = ( rDataMemberPrefix . sourceName . lit "M" <>
            rUnqualifiedPrefix . unqualifiedName <>
            rSubstitutionPrefix . substitution <>
+           rSubstitutionPrefix . rSubStdNamespace . lit "St" <>
            rTemplateParamPrefix . templateParam <>
            rTemplateArgsPrefix . templateArgs
          )
@@ -233,7 +234,7 @@ name = ( rNestedName . lit "N" . rList cvQualifier . rList1 prefix . unqualified
 substitution :: Boomerang StringError String a (Substitution :- a)
 substitution = (
                  rSubstitution . lit "S" . rMaybe seq_id . lit "_" <>
-                 rSubStdNamespace . lit "St" <>
+                 -- rSubStdNamespace . lit "St" <> -- this one is not standalone, but must be a prefix
                  rSubStdAllocator . lit "Sa" <>
                  rSubBasicString . lit "Sb" <>
                  rSubBasicStringArgs . lit "Ss" <>

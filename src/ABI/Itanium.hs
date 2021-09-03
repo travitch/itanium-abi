@@ -231,7 +231,8 @@ name = ( rNestedName . lit "N" . rList cvQualifier . rList1 prefix . unqualified
        )
 
 substitution :: Boomerang StringError String a (Substitution :- a)
-substitution = ( rSubstitution . lit "S" . rMaybe (rList1 (satisfy (/='_'))) . lit "_" <>
+substitution = (
+                 rSubstitution . lit "S" . rMaybe seq_id . lit "_" <>
                  rSubStdNamespace . lit "St" <>
                  rSubStdAllocator . lit "Sa" <>
                  rSubBasicString . lit "Sb" <>
@@ -240,6 +241,9 @@ substitution = ( rSubstitution . lit "S" . rMaybe (rList1 (satisfy (/='_'))) . l
                  rSubBasicOstream . lit "So" <>
                  rSubBasicIostream . lit "Sd"
                )
+  where seq_id = rList1 (satisfy (\c -> and [ c /= '_'
+                                            , (isAsciiUpper c || isDigit c)
+                                            ]))
 
 unscopedName :: Boomerang StringError String a (UName :- a)
 unscopedName = ( rUStdName . lit "St" . unqualifiedName <>

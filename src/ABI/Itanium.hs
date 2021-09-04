@@ -27,6 +27,7 @@ module ABI.Itanium (
 
 import Prelude hiding ( (.) )
 import Control.Category ( (.) )
+import Data.Char
 import Text.Boomerang
 import Text.Boomerang.String
 import Text.Boomerang.TH

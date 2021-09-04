@@ -11,7 +11,7 @@ import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.Maybe ( fromMaybe )
 import Data.Monoid
-import Data.Text.Lazy ( Text, unpack )
+import Data.Text.Lazy ( Text, unpack, unsnoc )
 import Data.Text.Lazy.Builder
 
 import ABI.Itanium.Types
@@ -141,6 +141,21 @@ dispatchTopLevel n =
       tn <- dispatchTopLevel target
       return $! mconcat [ fromString "virtual thunk to ", tn ]
 
+-- -- | There is a specific parse rule in older C++ that two
+-- -- consecutive template closure brackets have to be separated by a
+-- -- space.  This was changed in C++14, but the c++filt (i.e. the
+-- -- reference standard) still emits the space separators.  This
+-- -- function adds the brackets around template arguments, adding the
+-- -- space separator for compatibility with c++filt and older C++.
+
+templateBracket :: Builder -> Builder
+templateBracket tmpltArgs =
+  let lastIsTemplateClosure = maybe False (('>' ==) . snd) . unsnoc . toLazyText
+  in singleton '<' `mappend`
+     if lastIsTemplateClosure tmpltArgs
+     then tmpltArgs `mappend` fromString " >"
+     else tmpltArgs `mappend` singleton '>'
+
 showName :: Name -> Pretty Builder
 showName n =
   case n of
@@ -162,14 +177,11 @@ showName n =
       un <- showUName uname
       recordSubstitution' un
       tns <- showTArgs targs
-      recordSubstitution $! mconcat [ un, singleton '<'
-                                    , tns
-                                    , singleton '>'
-                                    ]
+      recordSubstitution $! un `mappend` templateBracket tns
     UnscopedTemplateSubstitution s targs -> do
       ss <- showSubstitution s
       tns <- showTArgs targs
-      return $! mconcat [ ss, singleton '<', tns, singleton '>' ]
+      return $! ss `mappend` templateBracket tns
 
 showUName :: UName -> Pretty Builder
 showUName u =
@@ -191,9 +203,8 @@ showPrefixedTArgs = go mempty
       case pfxs of
         [] -> do
           tns <- mapM showTArg targs
-          return $! mconcat [ acc, singleton '<'
-                            , mconcat $ intersperse (fromString ", ") tns
-                            , singleton '>' ]
+          let allTns = mconcat $ intersperse (fromString ", ") tns
+          return $! acc `mappend` templateBracket allTns
         pfx : rest -> do
           nextAcc <- showPrefix acc pfx
           go nextAcc rest targs

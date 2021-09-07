@@ -15,7 +15,7 @@ mkTestCase (sym, expected) = testCase sym $ do
     Right dname ->
       assertEqual sym (normalize expected) (normalize (cxxNameToString dname))
   where
-    normalize = filter (`notElem` " \n")
+    normalize = filter (`notElem` "\n")
 
 main :: IO ()
 main = do

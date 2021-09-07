@@ -3,6 +3,7 @@ module ABI.Itanium.Pretty (
   cxxNameToText
   ) where
 
+import Control.Monad ( foldM, void )
 import Control.Monad.Trans.State.Strict
 import Data.Char ( digitToInt )
 import Data.List ( foldl', intersperse )
@@ -10,23 +11,66 @@ import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.Maybe ( fromMaybe )
 import Data.Monoid
-import Data.Text.Lazy ( Text, unpack )
+import Data.Text.Lazy ( Text, unpack, unsnoc )
 import Data.Text.Lazy.Builder
 
 import ABI.Itanium.Types
 
+-- | The Pretty type maintains the substitution table used for
+-- emitting a demangled names.  For compression, demangling allows the
+-- use of "substitutions" to refer to previously emitted portions of
+-- the name.  Most portions of the name that are emitted are recorded
+-- (with compositional buildup: @foo::bar@ will record both @foo@ and
+-- @foo::bar@).  The only exceptions to recording are function names
+-- and builtin types.  As a name is demangled, each portion will be
+-- added to this table for use in subsequent substitutions.
+
 type Pretty = State (HashMap Int Builder)
 
--- Only record substitutions that were not previously seen
-recordSubstitution :: Builder -> Pretty ()
+-- | Records a substitution component in the current table, skipping
+-- any duplications.
+--
+-- For convenience, it returns the same item it recorded to allow this
+-- to be the last statement for a Pretty Builder operation that should
+-- record and return the generated output.
+recordSubstitution :: Builder -> Pretty Builder
 recordSubstitution b = do
   s <- get
   case b `elem` HM.elems s of
     False -> do
       let n = HM.size s
       put $! HM.insert n b s
-    True -> return ()
+      return b
+    True -> return b
 
+-- | This is a convenience wrapper for 'recordSubstitution' that will
+-- return a void value; this can be used where the results of the
+-- recording are not needed and the compiler would warn about an
+-- unused return value.
+recordSubstitution' :: Builder -> Pretty ()
+recordSubstitution' = void . recordSubstitution
+
+-- | Function names are not recorded, but their prefixes are.  For example:
+--
+--    Input                          | Records
+--    -------------------------------|--------------------------------
+--    @foo(int)@                     | (nothing)
+--                                   |
+--    @bar::foo(int)@                | @bar@
+--                                   |
+--    @bar::cow<moo>::boo::foo(int)@ | @bar@ @bar::cow@ @bar::cow<moo>@
+--                                   | @bar::cow<moo>::boo@
+--
+-- To support this, the various parts of the function call are
+-- recorded as normal (using recursive, shared pretty printing) and
+-- then this function is called to drop the last element recorded,
+-- which is the actual function name.
+dropLastSubstitution :: Pretty ()
+dropLastSubstitution = modify $ \s -> HM.delete ((HM.size s) - 1) s
+
+-- | Lookup a recorded substitution and return it.  A lookup failure
+-- means either a malformed mangled name (unlikely) or a logic error
+-- below that did not properly record a substitution component.
 getSubstitution :: Maybe String -> Pretty Builder
 getSubstitution s = do
   st <- get
@@ -52,17 +96,19 @@ dispatchTopLevel n =
   case n of
     Function (NestedName qs@(_:_) pfxs uname) argTypes -> do
       pn <- showPrefixedName pfxs uname
+      dropLastSubstitution
       argBuilders <- case argTypes of
         [VoidType] -> return mempty
         _ -> mapM showType argTypes
+      quals <- showQualifiers pn qs
       return $! mconcat [ pn
                         , singleton '('
                         , mconcat $ intersperse (fromString ", ") argBuilders
                         , fromString ") "
-                        , showQualifiers qs
-                        ]
+                        ] `mappend` quals
     Function fname argTypes -> do
       nameBuilder <- showName fname
+      dropLastSubstitution
       argBuilders <- case argTypes of
         [VoidType] -> return mempty
         _ -> mapM showType argTypes
@@ -71,6 +117,7 @@ dispatchTopLevel n =
                         , mconcat $ intersperse (fromString ", ") argBuilders
                         , singleton ')'
                         ]
+    ConstStructData varName -> showUnqualifiedName varName
     Data varName -> showName varName
     VirtualTable t -> do
       tb <- showType t
@@ -94,32 +141,47 @@ dispatchTopLevel n =
       tn <- dispatchTopLevel target
       return $! mconcat [ fromString "virtual thunk to ", tn ]
 
+-- -- | There is a specific parse rule in older C++ that two
+-- -- consecutive template closure brackets have to be separated by a
+-- -- space.  This was changed in C++14, but the c++filt (i.e. the
+-- -- reference standard) still emits the space separators.  This
+-- -- function adds the brackets around template arguments, adding the
+-- -- space separator for compatibility with c++filt and older C++.
+
+templateBracket :: Builder -> Builder
+templateBracket tmpltArgs =
+  let lastIsTemplateClosure = maybe False (('>' ==) . snd) . unsnoc . toLazyText
+  in singleton '<' `mappend`
+     if lastIsTemplateClosure tmpltArgs
+     then tmpltArgs `mappend` fromString " >"
+     else tmpltArgs `mappend` singleton '>'
+
 showName :: Name -> Pretty Builder
 showName n =
   case n of
     NestedName qs pfxs uname -> do
       pn <- showPrefixedName pfxs uname
+      recordSubstitution' pn
       case null qs of
-        False -> return $! mconcat [ pn, singleton ' ', showQualifiers qs ]
+        False -> mappend (mconcat [ pn, singleton ' ' ]) <$> showQualifiers pn qs
         True -> return $! pn
     UnscopedName uname -> showUName uname
     NestedTemplateName [] pfxs targs ->
-      showPrefixedTArgs pfxs targs
+      showPrefixedTArgs pfxs targs >>= recordSubstitution
     NestedTemplateName qs pfxs targs -> do
       pn <- showPrefixedTArgs pfxs targs
-      return $! mconcat [ pn, singleton ' ', showQualifiers qs ]
+      recordSubstitution' pn
+      quals <- showQualifiers pn qs
+      return $! mconcat [ pn, singleton ' ' ] `mappend` quals
     UnscopedTemplateName uname targs -> do
       un <- showUName uname
-      recordSubstitution un
+      recordSubstitution' un
       tns <- showTArgs targs
-      return $! mconcat [ un, singleton '<'
-                        , tns
-                        , singleton '>'
-                        ]
+      recordSubstitution $! un `mappend` templateBracket tns
     UnscopedTemplateSubstitution s targs -> do
       ss <- showSubstitution s
       tns <- showTArgs targs
-      return $! mconcat [ ss, singleton '<', tns, singleton '>' ]
+      return $! ss `mappend` templateBracket tns
 
 showUName :: UName -> Pretty Builder
 showUName u =
@@ -141,15 +203,10 @@ showPrefixedTArgs = go mempty
       case pfxs of
         [] -> do
           tns <- mapM showTArg targs
-          return $! mconcat [ acc, singleton '<'
-                            , mconcat $ intersperse (fromString ", ") tns
-                            , singleton '>' ]
+          let allTns = mconcat $ intersperse (fromString ", ") tns
+          return $! acc `mappend` templateBracket allTns
         pfx : rest -> do
-          px <- showPrefix pfx
-          let nextAcc = case acc == mempty of
-                False -> mconcat [ acc, fromString "::", px ]
-                True -> px
-          recordSubstitution nextAcc
+          nextAcc <- showPrefix acc pfx
           go nextAcc rest targs
 
 showTArg :: TemplateArg -> Pretty Builder
@@ -164,10 +221,11 @@ showPrefixedName = go mempty
   where
     go acc pfxs uname =
       case (pfxs, uname) of
-        ([], SourceName n) ->
-          return $! mconcat [ acc, fromString "::", fromString n ]
+        ([], SourceName n) -> do
+          recordSubstitution $! mconcat [ acc, fromString "::", fromString n ]
         ([], OperatorName op) -> do
           ob <- showOperator op
+          recordSubstitution' ob
           case acc == mempty of
             False -> return $! mconcat [ acc, fromString "::operator", ob ]
             True -> return $! mconcat [ fromString "operator", ob ]
@@ -185,14 +243,19 @@ showPrefixedName = go mempty
                 False -> fromString "::"
                 True -> fromString "::~"
               sub = curPfx `mappend` fromString className
-          recordSubstitution sub
+          recordSubstitution' sub
           return $! mconcat [ curPfx, fromString className, inFix, fromString className ]
+        ([UnqualifiedPrefix (SourceName className), tmplPfx@(TemplateArgsPrefix{})], CtorDtorName cd) -> do
+          let prevPfx here = case acc == mempty of
+                               True -> here
+                               False -> mconcat [ acc, fromString "::", here ]
+          nextAcc <- showPrefix (prevPfx $ fromString className) tmplPfx
+          let inFix = case isDestructor cd of
+                False -> fromString "::"
+                True -> fromString "::~"
+          return $! mconcat [ nextAcc, inFix, fromString className ]
         (outerPfx : innerPfxs, _) -> do
-          px <- showPrefix outerPfx
-          let nextAcc = case acc == mempty of
-                False -> mconcat [ acc, fromString "::", px ]
-                True -> px
-          recordSubstitution nextAcc
+          nextAcc <- showPrefix acc outerPfx
           go nextAcc innerPfxs uname
         ([], CtorDtorName _) -> error "Illegal fallthrough in constructor/destructor case"
 
@@ -204,29 +267,50 @@ isDestructor cd =
     D2 -> True
     _ -> False
 
-showQualifiers :: [CVQualifier] -> Builder
-showQualifiers qs =
+showQualifiers :: Builder -> [CVQualifier] -> Pretty Builder
+showQualifiers qualifies qs =
   case null qs of
-    True -> mempty
-    False ->
-      let qs' = map showQualifier qs
-      in mconcat qs'
+    True -> return mempty
+    False -> snd <$> foldM showQualifier (qualifies,mempty) qs
 
-showQualifier :: CVQualifier -> Builder
-showQualifier q =
-  case q of
-    Restrict -> fromString "restrict"
-    Volatile -> fromString "volatile"
-    Const -> fromString "const"
+showQualifier :: (Builder, Builder) -> CVQualifier -> Pretty (Builder, Builder)
+showQualifier (accum,res) q = do
+  -- accum is the accumulated name with the base name, used for
+  -- recording subtitutions.  res is the accumulated name but not
+  -- including the base name which is previously emitted.  res is
+  -- ultimately returned.
+  let qual = case q of
+              Restrict -> fromString "restrict"
+              Volatile -> fromString "volatile"
+              Const -> fromString "const"
+      acc' = mconcat [ accum, singleton ' ', qual ]
+      res' = case res == mempty of
+               True -> qual
+               False -> mconcat [ res, singleton ' ', qual ]
+  recordSubstitution' acc'
+  return $! (acc', res')
+
 
 -- | These are outer namespace/class name qualifiers, so convert them
 -- to strings followed by ::
-showPrefix :: Prefix -> Pretty Builder
-showPrefix pfx =
-  case pfx of
-    DataMemberPrefix s -> return $! fromString s
-    UnqualifiedPrefix uname -> showUnqualifiedName uname
-    SubstitutionPrefix s -> showSubstitution s
+showPrefix :: Builder -> Prefix -> Pretty Builder
+showPrefix prior pfx =
+  let addPrior doRecord toThis = do
+        let ret = case prior == mempty of
+                    False -> mconcat [ prior, fromString "::", toThis ]
+                    True -> toThis
+        if doRecord then recordSubstitution ret else return ret
+  in case pfx of
+       DataMemberPrefix s -> addPrior True $ fromString s
+       UnqualifiedPrefix uname -> addPrior True =<< showUnqualifiedName uname
+       SubstitutionPrefix s -> addPrior False =<< showSubstitution s
+       TemplateArgsPrefix args ->
+         case prior == mempty of
+           True -> showPrefixedTArgs [] args >>= recordSubstitution
+           False -> do recordSubstitution' prior
+                       targs <- showPrefixedTArgs [] args
+                       let this = mconcat [ prior, targs ]
+                       recordSubstitution this
 
 showUnqualifiedName :: UnqualifiedName -> Pretty Builder
 showUnqualifiedName uname =
@@ -301,9 +385,8 @@ showType t =
   case t of
     QualifiedType qs t' -> do
       tb <- showType t'
-      let r = mconcat [ tb, singleton ' ', showQualifiers qs ]
-      recordSubstitution r
-      return $! r
+      quals <- showQualifiers tb qs
+      return $! mconcat [ tb, singleton ' ' ] `mappend` quals
     PointerToType (FunctionType ts) -> do
       -- Since we don't explicitly descend the FunctionType here, we
       -- need to create a stub entry in the substitution table for it
@@ -311,40 +394,33 @@ showType t =
       -- stub will never be referenced because function types aren't
       -- first-class
       ts' <- mapM showType ts
-      recordSubstitution (mconcat ts')
+      recordSubstitution' (mconcat ts')
       r <- showFunctionType ts
       recordSubstitution r
-      return $! r
     PointerToType t' -> do
       tb <- showType t'
       let r = tb `mappend` singleton '*'
       recordSubstitution r
-      return $! r
     ReferenceToType t' -> do
       tb <- showType t'
       let r = tb `mappend` singleton '&'
       recordSubstitution r
-      return $! r
     RValueReferenceToType t' -> do
       tb <- showType t'
       let r = tb `mappend` fromString "&&"
       recordSubstitution r
-      return $! r
     ComplexPairType t' -> do
       tb <- showType t'
       let r = tb `mappend` fromString " complex"
-      recordSubstitution r
       return $! r
     ImaginaryType t' -> do
       tb <- showType t'
       let r = tb `mappend` fromString " imaginary"
-      recordSubstitution r
       return $! r
     ParameterPack _ -> undefined
     VendorTypeQualifier q t' -> do
       tb <- showType t'
       let r = mconcat [ fromString q, singleton ' ', tb ]
-      recordSubstitution r
       return $! r
     VoidType -> return $! fromString "void"
     Wchar_tType -> return $! fromString "wchar_t"
@@ -376,25 +452,20 @@ showType t =
     ExternCFunctionType ts -> do
       tb <- showFunctionType ts
       let r = fromString "extern \"C\" " `mappend` tb
-      recordSubstitution r
       return $! r
     ArrayTypeN (Just n) t' -> do
       tb <- showType t'
       let r = mconcat [ tb, singleton '[', fromString (show n), singleton ']' ]
-      recordSubstitution r
       return $! r
     ArrayTypeN Nothing t' -> do
       tb <- showType t'
       let r = tb `mappend` fromString "[]"
-      recordSubstitution r
       return $! r
     ClassEnumType n -> do
       r <- showName n
       recordSubstitution r
-      return r
     PtrToMemberType c m -> do
       r <- showPtrToMember c m
-      recordSubstitution r
       return $! r
     SubstitutionType s -> showSubstitution s
 

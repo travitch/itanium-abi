@@ -27,6 +27,31 @@ data DecodedName = Function Name [CXXType]
                  | GuardVariable Name
                  | OverrideThunk CallOffset DecodedName
                  | OverrideThunkCovariant CallOffset CallOffset DecodedName
+
+                 | ConstStructData UnqualifiedName
+                   -- ^ Const data that is not a builtin data type (as
+                   -- a <special-name>).
+                   --
+                   -- This construct is not specifically identified in
+                   -- the documentation, but for the following input:
+                   --
+                   --   struct mystr { int val; };
+                   --   const struct mystr here = { 9 };
+                   --
+                   -- Also works with:
+                   --
+                   --   class mycls { public: int val; }
+                   --   const class mycls here = { 8 };
+                   --
+                   -- When compiled with Clang/LLVM results in Global
+                   -- Variable (apparently always using the
+                   -- length-specified <source-name> syntax):
+                   --
+                   --    _ZL4here
+                   --
+                   -- This is apparently only used for const
+                   -- declarations and only for non-builtin datatypes.
+
                  deriving (Eq, Ord, Show, Data, Typeable)
 
 data CallOffset = VirtualOffset Int Int

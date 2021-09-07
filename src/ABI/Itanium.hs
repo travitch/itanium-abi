@@ -27,6 +27,7 @@ module ABI.Itanium (
 
 import Prelude hiding ( (.) )
 import Control.Category ( (.) )
+import Data.Char
 import Text.Boomerang
 import Text.Boomerang.String
 import Text.Boomerang.TH
@@ -72,6 +73,7 @@ topLevelEntity =
     rGuardVariable . lit "GV" . name <>
     rOverrideThunk . lit "T" . callOffset . topLevelEntity <>
     rOverrideThunkCovariant . lit "Tc" . callOffset . callOffset . topLevelEntity <>
+    rConstStructData . lit "L" . unqualifiedName <>
     rFunction . name . bareFunctionType <>
     rData . name
   )
@@ -217,6 +219,7 @@ prefix :: Boomerang StringError String a (Prefix :- a)
 prefix = ( rDataMemberPrefix . sourceName . lit "M" <>
            rUnqualifiedPrefix . unqualifiedName <>
            rSubstitutionPrefix . substitution <>
+           rSubstitutionPrefix . rSubStdNamespace . lit "St" <>
            rTemplateParamPrefix . templateParam <>
            rTemplateArgsPrefix . templateArgs
          )
@@ -230,8 +233,9 @@ name = ( rNestedName . lit "N" . rList cvQualifier . rList1 prefix . unqualified
        )
 
 substitution :: Boomerang StringError String a (Substitution :- a)
-substitution = ( rSubstitution . lit "S" . rMaybe (rList1 (satisfy (/='_'))) . lit "_" <>
-                 rSubStdNamespace . lit "St" <>
+substitution = (
+                 rSubstitution . lit "S" . rMaybe seq_id . lit "_" <>
+                 -- rSubStdNamespace . lit "St" <> -- this one is not standalone, but must be a prefix
                  rSubStdAllocator . lit "Sa" <>
                  rSubBasicString . lit "Sb" <>
                  rSubBasicStringArgs . lit "Ss" <>
@@ -239,6 +243,9 @@ substitution = ( rSubstitution . lit "S" . rMaybe (rList1 (satisfy (/='_'))) . l
                  rSubBasicOstream . lit "So" <>
                  rSubBasicIostream . lit "Sd"
                )
+  where seq_id = rList1 (satisfy (\c -> and [ c /= '_'
+                                            , (isAsciiUpper c || isDigit c)
+                                            ]))
 
 unscopedName :: Boomerang StringError String a (UName :- a)
 unscopedName = ( rUStdName . lit "St" . unqualifiedName <>

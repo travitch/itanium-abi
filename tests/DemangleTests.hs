@@ -13,7 +13,8 @@ mkTestCase (sym, expected) = testCase sym $ do
   case demangleName sym of
     Left err -> assertFailure (sym ++ " : " ++ err)
     Right dname ->
-      assertEqual sym (normalize expected) (normalize (cxxNameToString dname))
+      cxxNameToString dname >>=
+        \s -> assertEqual sym (normalize expected) (normalize s)
   where
     normalize = filter (`notElem` "\n")
 

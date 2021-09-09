@@ -25,7 +25,7 @@ import ABI.Itanium.Types
 -- and builtin types.  As a name is demangled, each portion will be
 -- added to this table for use in subsequent substitutions.
 
-type Pretty = State (HashMap Int Builder)
+type Pretty = StateT (HashMap Int Builder)
 
 -- | Records a substitution component in the current table, skipping
 -- any duplications.
@@ -33,7 +33,7 @@ type Pretty = State (HashMap Int Builder)
 -- For convenience, it returns the same item it recorded to allow this
 -- to be the last statement for a Pretty Builder operation that should
 -- record and return the generated output.
-recordSubstitution :: Builder -> Pretty Builder
+recordSubstitution :: Monad m => Builder -> Pretty m Builder
 recordSubstitution b = do
   s <- get
   case b `elem` HM.elems s of
@@ -47,7 +47,7 @@ recordSubstitution b = do
 -- return a void value; this can be used where the results of the
 -- recording are not needed and the compiler would warn about an
 -- unused return value.
-recordSubstitution' :: Builder -> Pretty ()
+recordSubstitution' :: Monad m => Builder -> Pretty m ()
 recordSubstitution' = void . recordSubstitution
 
 -- | Function names are not recorded, but their prefixes are.  For example:
@@ -65,13 +65,13 @@ recordSubstitution' = void . recordSubstitution
 -- recorded as normal (using recursive, shared pretty printing) and
 -- then this function is called to drop the last element recorded,
 -- which is the actual function name.
-dropLastSubstitution :: Pretty ()
+dropLastSubstitution :: Monad m => Pretty m ()
 dropLastSubstitution = modify $ \s -> HM.delete ((HM.size s) - 1) s
 
 -- | Lookup a recorded substitution and return it.  A lookup failure
 -- means either a malformed mangled name (unlikely) or a logic error
 -- below that did not properly record a substitution component.
-getSubstitution :: Maybe String -> Pretty Builder
+getSubstitution :: Monad m => Maybe String -> Pretty m Builder
 getSubstitution s = do
   st <- get
   case s of
@@ -85,13 +85,14 @@ getSubstitution s = do
     errMsg = error ("No substitution found for " ++ show s)
     lookupError k m = fromMaybe errMsg (HM.lookup k m)
 
-cxxNameToText :: DecodedName -> Text
-cxxNameToText n = toLazyText $ evalState (dispatchTopLevel n) mempty
 
-cxxNameToString :: DecodedName -> String
-cxxNameToString = unpack . cxxNameToText
+cxxNameToText :: Monad m => DecodedName -> m Text
+cxxNameToText n = toLazyText <$> evalStateT (dispatchTopLevel n) mempty
 
-dispatchTopLevel :: DecodedName -> Pretty Builder
+cxxNameToString :: Monad m => DecodedName -> m String
+cxxNameToString = fmap unpack . cxxNameToText
+
+dispatchTopLevel :: Monad m => DecodedName -> Pretty m Builder
 dispatchTopLevel n =
   case n of
     Function (NestedName qs@(_:_) pfxs uname) argTypes -> do
@@ -156,7 +157,7 @@ templateBracket tmpltArgs =
      then tmpltArgs `mappend` fromString " >"
      else tmpltArgs `mappend` singleton '>'
 
-showName :: Name -> Pretty Builder
+showName :: Monad m => Name -> Pretty m Builder
 showName n =
   case n of
     NestedName qs pfxs uname -> do
@@ -183,7 +184,7 @@ showName n =
       tns <- showTArgs targs
       return $! ss `mappend` templateBracket tns
 
-showUName :: UName -> Pretty Builder
+showUName :: Monad m => UName -> Pretty m Builder
 showUName u =
   case u of
     UName uname -> showUnqualifiedName uname
@@ -191,12 +192,12 @@ showUName u =
       un <- showUnqualifiedName uname
       return (fromString "std::" `mappend` un)
 
-showTArgs :: [TemplateArg] -> Pretty Builder
+showTArgs :: Monad m => [TemplateArg] -> Pretty m Builder
 showTArgs targs = do
   tns <- mapM showTArg targs
   return $! mconcat $! intersperse (fromString ", ") tns
 
-showPrefixedTArgs :: [Prefix] -> [TemplateArg] -> Pretty Builder
+showPrefixedTArgs :: Monad m => [Prefix] -> [TemplateArg] -> Pretty m Builder
 showPrefixedTArgs = go mempty
   where
     go acc pfxs targs =
@@ -209,14 +210,14 @@ showPrefixedTArgs = go mempty
           nextAcc <- showPrefix acc pfx
           go nextAcc rest targs
 
-showTArg :: TemplateArg -> Pretty Builder
+showTArg :: Monad m => TemplateArg -> Pretty m Builder
 showTArg ta =
   case ta of
     TypeTemplateArg t -> showType t
 
 -- pass the current prefix builder down so that it can be added to and
 -- stored for substitutions
-showPrefixedName :: [Prefix] -> UnqualifiedName -> Pretty Builder
+showPrefixedName :: Monad m => [Prefix] -> UnqualifiedName -> Pretty m Builder
 showPrefixedName = go mempty
   where
     go acc pfxs uname =
@@ -267,13 +268,15 @@ isDestructor cd =
     D2 -> True
     _ -> False
 
-showQualifiers :: Builder -> [CVQualifier] -> Pretty Builder
+showQualifiers :: Monad m => Builder -> [CVQualifier] -> Pretty m Builder
 showQualifiers qualifies qs =
   case null qs of
     True -> return mempty
     False -> snd <$> foldM showQualifier (qualifies,mempty) qs
 
-showQualifier :: (Builder, Builder) -> CVQualifier -> Pretty (Builder, Builder)
+showQualifier :: Monad m
+              => (Builder, Builder) -> CVQualifier
+              -> Pretty m (Builder, Builder)
 showQualifier (accum,res) q = do
   -- accum is the accumulated name with the base name, used for
   -- recording subtitutions.  res is the accumulated name but not
@@ -293,7 +296,7 @@ showQualifier (accum,res) q = do
 
 -- | These are outer namespace/class name qualifiers, so convert them
 -- to strings followed by ::
-showPrefix :: Builder -> Prefix -> Pretty Builder
+showPrefix :: Monad m => Builder -> Prefix -> Pretty m Builder
 showPrefix prior pfx =
   let addPrior doRecord toThis = do
         let ret = case prior == mempty of
@@ -312,7 +315,7 @@ showPrefix prior pfx =
                        let this = mconcat [ prior, targs ]
                        recordSubstitution this
 
-showUnqualifiedName :: UnqualifiedName -> Pretty Builder
+showUnqualifiedName :: Monad m => UnqualifiedName -> Pretty m Builder
 showUnqualifiedName uname =
   case uname of
     OperatorName op -> do
@@ -321,7 +324,7 @@ showUnqualifiedName uname =
     CtorDtorName _ -> error "showUnqualifiedName shouldn't reach the ctor/dtor case"
     SourceName s -> return (fromString s)
 
-showOperator :: Operator -> Pretty Builder
+showOperator :: Monad m => Operator -> Pretty m Builder
 showOperator op =
   case op of
     OpNew -> return $! fromString " new"
@@ -380,7 +383,7 @@ showOperator op =
       return $! singleton ' ' `mappend` tb
     OpVendor n oper -> return $! fromString ("vendor" ++ show n ++ oper) -- ??
 
-showType :: CXXType -> Pretty Builder
+showType :: Monad m => CXXType -> Pretty m Builder
 showType t =
   case t of
     QualifiedType qs t' -> do
@@ -469,7 +472,7 @@ showType t =
       return $! r
     SubstitutionType s -> showSubstitution s
 
-showSubstitution :: Substitution -> Pretty Builder
+showSubstitution :: Monad m => Substitution -> Pretty m Builder
 showSubstitution s =
   case s of
     Substitution ss -> getSubstitution ss
@@ -481,7 +484,7 @@ showSubstitution s =
     SubBasicOstream -> return $! fromString "std::basic_ostream<char, std::char_traits<char> >"
     SubBasicIostream -> return $! fromString "std::basic_iostream<char, std::char_traits<char> >"
 
-showPtrToMember :: CXXType -> CXXType -> Pretty Builder
+showPtrToMember :: Monad m => CXXType -> CXXType -> Pretty m Builder
 showPtrToMember (ClassEnumType n) (FunctionType (rt:argts)) = do
   rt' <- showType rt
   argts' <- mapM showType argts
@@ -492,7 +495,7 @@ showPtrToMember (ClassEnumType n) (FunctionType (rt:argts)) = do
                     ]
 showPtrToMember _ _ = error "Expected a ClassEnumType and FunctionType pair for PtrToMemberType"
 
-showFunctionType :: [CXXType] -> Pretty Builder
+showFunctionType :: Monad m => [CXXType] -> Pretty m Builder
 showFunctionType ts =
   case ts of
     [] -> error "Empty type list in function type"

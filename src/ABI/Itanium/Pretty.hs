@@ -1,15 +1,16 @@
 module ABI.Itanium.Pretty (
   cxxNameToString,
-  cxxNameToText
+  cxxNameToText,
+  MissingSubstitution
   ) where
 
 import Control.Monad ( foldM, void )
+import Control.Monad.Catch ( Exception, MonadThrow, throwM )
 import Control.Monad.Trans.State.Strict
 import Data.Char ( digitToInt )
 import Data.List ( foldl', intersperse )
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
-import Data.Maybe ( fromMaybe )
 import Data.Monoid
 import Data.Text.Lazy ( Text, unpack, unsnoc )
 import Data.Text.Lazy.Builder
@@ -71,28 +72,45 @@ dropLastSubstitution = modify $ \s -> HM.delete ((HM.size s) - 1) s
 -- | Lookup a recorded substitution and return it.  A lookup failure
 -- means either a malformed mangled name (unlikely) or a logic error
 -- below that did not properly record a substitution component.
-getSubstitution :: Monad m => Maybe String -> Pretty m Builder
+getSubstitution :: (Monad m, MonadThrow m) => Maybe String -> Pretty m Builder
 getSubstitution s = do
   st <- get
   case s of
-    Nothing -> return $! lookupError 0 st
+    Nothing -> lookupError 0 st
     -- This case always adds 1 from the number because the
     -- Nothing case is index zero
     Just ix ->
-      let n = numberValue 36 ix
-      in return $! lookupError (n+1) st
+      let n = numberValue 36 ix  -- seq ID is base 36
+      in lookupError (n+1) st
   where
-    errMsg = error ("No substitution found for " ++ show s)
-    lookupError k m = fromMaybe errMsg (HM.lookup k m)
+    errMsg = throwM $ MissingSubstitution s
+    lookupError k m = maybe errMsg return (HM.lookup k m)
+
+-- | The MissingSubstitution exception is thrown when the mangled name
+-- requests a substitution that cannot be found.  This indicates
+-- either an invalid mangled name or else an internal logic error in
+-- this Pretty implementation.
+
+data MissingSubstitution = MissingSubstitution (Maybe String)
+
+instance Exception MissingSubstitution
+instance Show MissingSubstitution where
+  show (MissingSubstitution s) = "No substitution found for " ++ show s
 
 
-cxxNameToText :: Monad m => DecodedName -> m Text
+-- | Primary interface to get the pretty version of a parsed mangled
+-- name in Text form.
+
+cxxNameToText :: (Monad m, MonadThrow m) => DecodedName -> m Text
 cxxNameToText n = toLazyText <$> evalStateT (dispatchTopLevel n) mempty
 
-cxxNameToString :: Monad m => DecodedName -> m String
+-- | Primary interface to get the pretty version of a parsed mangled
+-- name in String form.
+
+cxxNameToString :: (Monad m, MonadThrow m) => DecodedName -> m String
 cxxNameToString = fmap unpack . cxxNameToText
 
-dispatchTopLevel :: Monad m => DecodedName -> Pretty m Builder
+dispatchTopLevel :: (Monad m, MonadThrow m) => DecodedName -> Pretty m Builder
 dispatchTopLevel n =
   case n of
     Function (NestedName qs@(_:_) pfxs uname) argTypes -> do
@@ -157,7 +175,7 @@ templateBracket tmpltArgs =
      then tmpltArgs `mappend` fromString " >"
      else tmpltArgs `mappend` singleton '>'
 
-showName :: Monad m => Name -> Pretty m Builder
+showName :: (Monad m, MonadThrow m) => Name -> Pretty m Builder
 showName n =
   case n of
     NestedName qs pfxs uname -> do
@@ -184,7 +202,7 @@ showName n =
       tns <- showTArgs targs
       return $! ss `mappend` templateBracket tns
 
-showUName :: Monad m => UName -> Pretty m Builder
+showUName :: (Monad m, MonadThrow m) => UName -> Pretty m Builder
 showUName u =
   case u of
     UName uname -> showUnqualifiedName uname
@@ -192,12 +210,13 @@ showUName u =
       un <- showUnqualifiedName uname
       return (fromString "std::" `mappend` un)
 
-showTArgs :: Monad m => [TemplateArg] -> Pretty m Builder
+showTArgs :: (Monad m, MonadThrow m) => [TemplateArg] -> Pretty m Builder
 showTArgs targs = do
   tns <- mapM showTArg targs
   return $! mconcat $! intersperse (fromString ", ") tns
 
-showPrefixedTArgs :: Monad m => [Prefix] -> [TemplateArg] -> Pretty m Builder
+showPrefixedTArgs :: (Monad m, MonadThrow m)
+                  => [Prefix] -> [TemplateArg] -> Pretty m Builder
 showPrefixedTArgs = go mempty
   where
     go acc pfxs targs =
@@ -210,14 +229,15 @@ showPrefixedTArgs = go mempty
           nextAcc <- showPrefix acc pfx
           go nextAcc rest targs
 
-showTArg :: Monad m => TemplateArg -> Pretty m Builder
+showTArg :: (Monad m, MonadThrow m) => TemplateArg -> Pretty m Builder
 showTArg ta =
   case ta of
     TypeTemplateArg t -> showType t
 
 -- pass the current prefix builder down so that it can be added to and
 -- stored for substitutions
-showPrefixedName :: Monad m => [Prefix] -> UnqualifiedName -> Pretty m Builder
+showPrefixedName :: (Monad m, MonadThrow m)
+                 => [Prefix] -> UnqualifiedName -> Pretty m Builder
 showPrefixedName = go mempty
   where
     go acc pfxs uname =
@@ -296,7 +316,7 @@ showQualifier (accum,res) q = do
 
 -- | These are outer namespace/class name qualifiers, so convert them
 -- to strings followed by ::
-showPrefix :: Monad m => Builder -> Prefix -> Pretty m Builder
+showPrefix :: (Monad m, MonadThrow m) => Builder -> Prefix -> Pretty m Builder
 showPrefix prior pfx =
   let addPrior doRecord toThis = do
         let ret = case prior == mempty of
@@ -315,16 +335,17 @@ showPrefix prior pfx =
                        let this = mconcat [ prior, targs ]
                        recordSubstitution this
 
-showUnqualifiedName :: Monad m => UnqualifiedName -> Pretty m Builder
+showUnqualifiedName :: (Monad m, MonadThrow m)
+                    => UnqualifiedName -> Pretty m Builder
 showUnqualifiedName uname =
   case uname of
     OperatorName op -> do
       ob <- showOperator op
       return (fromString "operator" `mappend` ob)
     CtorDtorName _ -> error "showUnqualifiedName shouldn't reach the ctor/dtor case"
-    SourceName s -> return (fromString s)
+    SourceName s -> return (fromString s) -- KWQ: add Substitution?  "C" extern func?
 
-showOperator :: Monad m => Operator -> Pretty m Builder
+showOperator :: (Monad m, MonadThrow m) => Operator -> Pretty m Builder
 showOperator op =
   case op of
     OpNew -> return $! fromString " new"
@@ -383,7 +404,7 @@ showOperator op =
       return $! singleton ' ' `mappend` tb
     OpVendor n oper -> return $! fromString ("vendor" ++ show n ++ oper) -- ??
 
-showType :: Monad m => CXXType -> Pretty m Builder
+showType :: (Monad m, MonadThrow m) => CXXType -> Pretty m Builder
 showType t =
   case t of
     QualifiedType qs t' -> do
@@ -471,8 +492,9 @@ showType t =
       r <- showPtrToMember c m
       return $! r
     SubstitutionType s -> showSubstitution s
+    TemplateParamType t -> showTemplateParam t  -- needs recording!
 
-showSubstitution :: Monad m => Substitution -> Pretty m Builder
+showSubstitution :: (Monad m, MonadThrow m) => Substitution -> Pretty m Builder
 showSubstitution s =
   case s of
     Substitution ss -> getSubstitution ss
@@ -484,7 +506,11 @@ showSubstitution s =
     SubBasicOstream -> return $! fromString "std::basic_ostream<char, std::char_traits<char> >"
     SubBasicIostream -> return $! fromString "std::basic_iostream<char, std::char_traits<char> >"
 
-showPtrToMember :: Monad m => CXXType -> CXXType -> Pretty m Builder
+showTemplateParam :: Monad m => TemplateParam -> Pretty m Builder
+showTemplateParam t = return $! fromString $ show t  -- KWQ
+
+showPtrToMember :: (Monad m, MonadThrow m)
+                => CXXType -> CXXType -> Pretty m Builder
 showPtrToMember (ClassEnumType n) (FunctionType (rt:argts)) = do
   rt' <- showType rt
   argts' <- mapM showType argts
@@ -493,9 +519,9 @@ showPtrToMember (ClassEnumType n) (FunctionType (rt:argts)) = do
                     , mconcat (intersperse (fromString ", ") argts')
                     , singleton ')'
                     ]
-showPtrToMember _ _ = error "Expected a ClassEnumType and FunctionType pair for PtrToMemberType"
+showPtrToMember _ _ = error "Expected a ClassEnumType and FunctionType pair for PtrToMemberType"  -- KWQ
 
-showFunctionType :: Monad m => [CXXType] -> Pretty m Builder
+showFunctionType :: (Monad m, MonadThrow m) => [CXXType] -> Pretty m Builder
 showFunctionType ts =
   case ts of
     [] -> error "Empty type list in function type"

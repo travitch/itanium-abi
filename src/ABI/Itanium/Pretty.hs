@@ -1,7 +1,13 @@
 module ABI.Itanium.Pretty (
   cxxNameToString,
   cxxNameToText,
-  MissingSubstitution
+  -- * Exceptions thrown
+  MissingSubstitution,
+  CtorDtorFallthru,
+  UnqualCtorDtor,
+  NonPointerFunctionType,
+  BarePtrToMember,
+  EmptyFunctionType
   ) where
 
 import Control.Monad ( foldM, void )
@@ -99,7 +105,9 @@ instance Show MissingSubstitution where
 
 
 -- | Primary interface to get the pretty version of a parsed mangled
--- name in Text form.
+-- name in Text form.  This is a monadic operation to support throwing
+-- an exception in that outer monad when there is a pretty-printing
+-- conversion error.
 
 cxxNameToText :: (Monad m, MonadThrow m) => DecodedName -> m Text
 cxxNameToText n = toLazyText <$> evalStateT (dispatchTopLevel n) mempty
@@ -278,7 +286,18 @@ showPrefixedName = go mempty
         (outerPfx : innerPfxs, _) -> do
           nextAcc <- showPrefix acc outerPfx
           go nextAcc innerPfxs uname
-        ([], CtorDtorName _) -> error "Illegal fallthrough in constructor/destructor case"
+        ([], CtorDtorName _) -> throwM CtorDtorFallthru
+
+-- | The CtorDtorFallthru exception is thrown when a Constructor or
+-- Destructor is declared without declaring the object type that it is
+-- the Constructor or Destructor for.  This indicates either an
+-- invalid mangled name or else an internal logic error in prefix
+-- evaluation.
+
+data CtorDtorFallthru = CtorDtorFallthru
+instance Exception CtorDtorFallthru
+instance Show CtorDtorFallthru where
+  show _ = "Illegal fallthrough in constructor/destructor case"
 
 isDestructor :: CtorDtor -> Bool
 isDestructor cd =
@@ -342,8 +361,19 @@ showUnqualifiedName uname =
     OperatorName op -> do
       ob <- showOperator op
       return (fromString "operator" `mappend` ob)
-    CtorDtorName _ -> error "showUnqualifiedName shouldn't reach the ctor/dtor case"
+    CtorDtorName _ -> throwM UnqualCtorDtor
     SourceName s -> return (fromString s) -- KWQ: add Substitution?  "C" extern func?
+
+-- | The UnqualCtorDtor exception is thrown when a attempting to
+-- generate a Constructor or Destructor name for an Unqualified name.
+-- Although this is allowed by the specification, in this
+-- implementation it represents a logic issue since there is no known
+-- object to declare the Constructor or Destructor for.
+
+data UnqualCtorDtor = UnqualCtorDtor
+instance Exception UnqualCtorDtor
+instance Show UnqualCtorDtor where
+  show _ = "showUnqualifiedName shouldn't reach the ctor/dtor case?"
 
 showOperator :: (Monad m, MonadThrow m) => Operator -> Pretty m Builder
 showOperator op =
@@ -472,7 +502,7 @@ showType t =
     AutoType -> return $! fromString "auto"
     NullPtrType -> return $! fromString "std::nullptr_t"
     VendorBuiltinType s -> return $! fromString s
-    FunctionType _ -> error "Only pointers to function types are supported"
+    FunctionType _ -> throwM NonPointerFunctionType
     ExternCFunctionType ts -> do
       tb <- showFunctionType ts
       let r = fromString "extern \"C\" " `mappend` tb
@@ -493,6 +523,16 @@ showType t =
       return $! r
     SubstitutionType s -> showSubstitution s
     TemplateParamType t -> showTemplateParam t  -- needs recording!
+
+-- | The NonPointerFunctionType exception is thrown when attempting to
+-- pretty-print a function type that is not a pointer.  First-class
+-- function types are not supported at this time.  This is a logic
+-- error in the library?
+
+data NonPointerFunctionType = NonPointerFunctionType
+instance Exception NonPointerFunctionType
+instance Show NonPointerFunctionType where
+    show _ = "Only pointers to function types are supported"
 
 showSubstitution :: (Monad m, MonadThrow m) => Substitution -> Pretty m Builder
 showSubstitution s =
@@ -519,12 +559,21 @@ showPtrToMember (ClassEnumType n) (FunctionType (rt:argts)) = do
                     , mconcat (intersperse (fromString ", ") argts')
                     , singleton ')'
                     ]
-showPtrToMember _ _ = error "Expected a ClassEnumType and FunctionType pair for PtrToMemberType"  -- KWQ
+showPtrToMember _ _ = throwM BarePtrToMember
+
+-- | The BarePtrToMember exception is thrown when there is not enough
+-- information to determine what the pointer should point to.  This is
+-- either a bad mangled name or an internal logic error.
+
+data BarePtrToMember = BarePtrToMember
+instance Exception BarePtrToMember
+instance Show BarePtrToMember where
+  show _ = "Expected a ClassEnumType and FunctionType pair for PtrToMemberType"
 
 showFunctionType :: (Monad m, MonadThrow m) => [CXXType] -> Pretty m Builder
 showFunctionType ts =
   case ts of
-    [] -> error "Empty type list in function type"
+    [] -> throwM EmptyFunctionType
     [rtype, VoidType] -> do
       rt' <- showType rtype
       return $! mconcat [ rt', fromString " (*)()" ]
@@ -533,6 +582,15 @@ showFunctionType ts =
       rbs <- mapM showType rest
       let arglist = mconcat $ intersperse (fromString ", ") rbs
       return $! mconcat [ tb, fromString " (*)(", arglist, singleton ')' ]
+
+-- | The EmptyFunctionType exception is thrown when there is no
+-- argument specification for the function.  This is either a bad
+-- mangled name or an internal logic error.
+
+data EmptyFunctionType = EmptyFunctionType
+instance Exception EmptyFunctionType
+instance Show EmptyFunctionType where
+  show _ = "Empty type list in function type"
 
 -- Helpers
 

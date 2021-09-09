@@ -1,15 +1,22 @@
 module ABI.Itanium.Pretty (
   cxxNameToString,
-  cxxNameToText
+  cxxNameToText,
+  -- * Exceptions thrown
+  MissingSubstitution,
+  CtorDtorFallthru,
+  UnqualCtorDtor,
+  NonPointerFunctionType,
+  BarePtrToMember,
+  EmptyFunctionType
   ) where
 
 import Control.Monad ( foldM, void )
+import Control.Monad.Catch ( Exception, MonadThrow, throwM )
 import Control.Monad.Trans.State.Strict
 import Data.Char ( digitToInt )
 import Data.List ( foldl', intersperse )
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
-import Data.Maybe ( fromMaybe )
 import Data.Monoid
 import Data.Text.Lazy ( Text, unpack, unsnoc )
 import Data.Text.Lazy.Builder
@@ -25,7 +32,7 @@ import ABI.Itanium.Types
 -- and builtin types.  As a name is demangled, each portion will be
 -- added to this table for use in subsequent substitutions.
 
-type Pretty = State (HashMap Int Builder)
+type Pretty = StateT (HashMap Int Builder)
 
 -- | Records a substitution component in the current table, skipping
 -- any duplications.
@@ -33,7 +40,7 @@ type Pretty = State (HashMap Int Builder)
 -- For convenience, it returns the same item it recorded to allow this
 -- to be the last statement for a Pretty Builder operation that should
 -- record and return the generated output.
-recordSubstitution :: Builder -> Pretty Builder
+recordSubstitution :: Monad m => Builder -> Pretty m Builder
 recordSubstitution b = do
   s <- get
   case b `elem` HM.elems s of
@@ -47,7 +54,7 @@ recordSubstitution b = do
 -- return a void value; this can be used where the results of the
 -- recording are not needed and the compiler would warn about an
 -- unused return value.
-recordSubstitution' :: Builder -> Pretty ()
+recordSubstitution' :: Monad m => Builder -> Pretty m ()
 recordSubstitution' = void . recordSubstitution
 
 -- | Function names are not recorded, but their prefixes are.  For example:
@@ -65,33 +72,53 @@ recordSubstitution' = void . recordSubstitution
 -- recorded as normal (using recursive, shared pretty printing) and
 -- then this function is called to drop the last element recorded,
 -- which is the actual function name.
-dropLastSubstitution :: Pretty ()
+dropLastSubstitution :: Monad m => Pretty m ()
 dropLastSubstitution = modify $ \s -> HM.delete ((HM.size s) - 1) s
 
 -- | Lookup a recorded substitution and return it.  A lookup failure
 -- means either a malformed mangled name (unlikely) or a logic error
 -- below that did not properly record a substitution component.
-getSubstitution :: Maybe String -> Pretty Builder
+getSubstitution :: (Monad m, MonadThrow m) => Maybe String -> Pretty m Builder
 getSubstitution s = do
   st <- get
   case s of
-    Nothing -> return $! lookupError 0 st
+    Nothing -> lookupError 0 st
     -- This case always adds 1 from the number because the
     -- Nothing case is index zero
     Just ix ->
-      let n = numberValue 36 ix
-      in return $! lookupError (n+1) st
+      let n = numberValue 36 ix  -- seq ID is base 36
+      in lookupError (n+1) st
   where
-    errMsg = error ("No substitution found for " ++ show s)
-    lookupError k m = fromMaybe errMsg (HM.lookup k m)
+    errMsg = throwM $ MissingSubstitution s
+    lookupError k m = maybe errMsg return (HM.lookup k m)
 
-cxxNameToText :: DecodedName -> Text
-cxxNameToText n = toLazyText $ evalState (dispatchTopLevel n) mempty
+-- | The MissingSubstitution exception is thrown when the mangled name
+-- requests a substitution that cannot be found.  This indicates
+-- either an invalid mangled name or else an internal logic error in
+-- this Pretty implementation.
 
-cxxNameToString :: DecodedName -> String
-cxxNameToString = unpack . cxxNameToText
+data MissingSubstitution = MissingSubstitution (Maybe String)
 
-dispatchTopLevel :: DecodedName -> Pretty Builder
+instance Exception MissingSubstitution
+instance Show MissingSubstitution where
+  show (MissingSubstitution s) = "No substitution found for " ++ show s
+
+
+-- | Primary interface to get the pretty version of a parsed mangled
+-- name in Text form.  This is a monadic operation to support throwing
+-- an exception in that outer monad when there is a pretty-printing
+-- conversion error.
+
+cxxNameToText :: (Monad m, MonadThrow m) => DecodedName -> m Text
+cxxNameToText n = toLazyText <$> evalStateT (dispatchTopLevel n) mempty
+
+-- | Primary interface to get the pretty version of a parsed mangled
+-- name in String form.
+
+cxxNameToString :: (Monad m, MonadThrow m) => DecodedName -> m String
+cxxNameToString = fmap unpack . cxxNameToText
+
+dispatchTopLevel :: (Monad m, MonadThrow m) => DecodedName -> Pretty m Builder
 dispatchTopLevel n =
   case n of
     Function (NestedName qs@(_:_) pfxs uname) argTypes -> do
@@ -156,7 +183,7 @@ templateBracket tmpltArgs =
      then tmpltArgs `mappend` fromString " >"
      else tmpltArgs `mappend` singleton '>'
 
-showName :: Name -> Pretty Builder
+showName :: (Monad m, MonadThrow m) => Name -> Pretty m Builder
 showName n =
   case n of
     NestedName qs pfxs uname -> do
@@ -183,7 +210,7 @@ showName n =
       tns <- showTArgs targs
       return $! ss `mappend` templateBracket tns
 
-showUName :: UName -> Pretty Builder
+showUName :: (Monad m, MonadThrow m) => UName -> Pretty m Builder
 showUName u =
   case u of
     UName uname -> showUnqualifiedName uname
@@ -191,12 +218,13 @@ showUName u =
       un <- showUnqualifiedName uname
       return (fromString "std::" `mappend` un)
 
-showTArgs :: [TemplateArg] -> Pretty Builder
+showTArgs :: (Monad m, MonadThrow m) => [TemplateArg] -> Pretty m Builder
 showTArgs targs = do
   tns <- mapM showTArg targs
   return $! mconcat $! intersperse (fromString ", ") tns
 
-showPrefixedTArgs :: [Prefix] -> [TemplateArg] -> Pretty Builder
+showPrefixedTArgs :: (Monad m, MonadThrow m)
+                  => [Prefix] -> [TemplateArg] -> Pretty m Builder
 showPrefixedTArgs = go mempty
   where
     go acc pfxs targs =
@@ -209,14 +237,15 @@ showPrefixedTArgs = go mempty
           nextAcc <- showPrefix acc pfx
           go nextAcc rest targs
 
-showTArg :: TemplateArg -> Pretty Builder
+showTArg :: (Monad m, MonadThrow m) => TemplateArg -> Pretty m Builder
 showTArg ta =
   case ta of
     TypeTemplateArg t -> showType t
 
 -- pass the current prefix builder down so that it can be added to and
 -- stored for substitutions
-showPrefixedName :: [Prefix] -> UnqualifiedName -> Pretty Builder
+showPrefixedName :: (Monad m, MonadThrow m)
+                 => [Prefix] -> UnqualifiedName -> Pretty m Builder
 showPrefixedName = go mempty
   where
     go acc pfxs uname =
@@ -257,7 +286,18 @@ showPrefixedName = go mempty
         (outerPfx : innerPfxs, _) -> do
           nextAcc <- showPrefix acc outerPfx
           go nextAcc innerPfxs uname
-        ([], CtorDtorName _) -> error "Illegal fallthrough in constructor/destructor case"
+        ([], CtorDtorName _) -> throwM CtorDtorFallthru
+
+-- | The CtorDtorFallthru exception is thrown when a Constructor or
+-- Destructor is declared without declaring the object type that it is
+-- the Constructor or Destructor for.  This indicates either an
+-- invalid mangled name or else an internal logic error in prefix
+-- evaluation.
+
+data CtorDtorFallthru = CtorDtorFallthru
+instance Exception CtorDtorFallthru
+instance Show CtorDtorFallthru where
+  show _ = "Illegal fallthrough in constructor/destructor case"
 
 isDestructor :: CtorDtor -> Bool
 isDestructor cd =
@@ -267,13 +307,15 @@ isDestructor cd =
     D2 -> True
     _ -> False
 
-showQualifiers :: Builder -> [CVQualifier] -> Pretty Builder
+showQualifiers :: Monad m => Builder -> [CVQualifier] -> Pretty m Builder
 showQualifiers qualifies qs =
   case null qs of
     True -> return mempty
     False -> snd <$> foldM showQualifier (qualifies,mempty) qs
 
-showQualifier :: (Builder, Builder) -> CVQualifier -> Pretty (Builder, Builder)
+showQualifier :: Monad m
+              => (Builder, Builder) -> CVQualifier
+              -> Pretty m (Builder, Builder)
 showQualifier (accum,res) q = do
   -- accum is the accumulated name with the base name, used for
   -- recording subtitutions.  res is the accumulated name but not
@@ -293,7 +335,7 @@ showQualifier (accum,res) q = do
 
 -- | These are outer namespace/class name qualifiers, so convert them
 -- to strings followed by ::
-showPrefix :: Builder -> Prefix -> Pretty Builder
+showPrefix :: (Monad m, MonadThrow m) => Builder -> Prefix -> Pretty m Builder
 showPrefix prior pfx =
   let addPrior doRecord toThis = do
         let ret = case prior == mempty of
@@ -312,16 +354,28 @@ showPrefix prior pfx =
                        let this = mconcat [ prior, targs ]
                        recordSubstitution this
 
-showUnqualifiedName :: UnqualifiedName -> Pretty Builder
+showUnqualifiedName :: (Monad m, MonadThrow m)
+                    => UnqualifiedName -> Pretty m Builder
 showUnqualifiedName uname =
   case uname of
     OperatorName op -> do
       ob <- showOperator op
       return (fromString "operator" `mappend` ob)
-    CtorDtorName _ -> error "showUnqualifiedName shouldn't reach the ctor/dtor case"
-    SourceName s -> return (fromString s)
+    CtorDtorName _ -> throwM UnqualCtorDtor
+    SourceName s -> return (fromString s) -- KWQ: add Substitution?  "C" extern func?
 
-showOperator :: Operator -> Pretty Builder
+-- | The UnqualCtorDtor exception is thrown when a attempting to
+-- generate a Constructor or Destructor name for an Unqualified name.
+-- Although this is allowed by the specification, in this
+-- implementation it represents a logic issue since there is no known
+-- object to declare the Constructor or Destructor for.
+
+data UnqualCtorDtor = UnqualCtorDtor
+instance Exception UnqualCtorDtor
+instance Show UnqualCtorDtor where
+  show _ = "showUnqualifiedName shouldn't reach the ctor/dtor case?"
+
+showOperator :: (Monad m, MonadThrow m) => Operator -> Pretty m Builder
 showOperator op =
   case op of
     OpNew -> return $! fromString " new"
@@ -380,7 +434,7 @@ showOperator op =
       return $! singleton ' ' `mappend` tb
     OpVendor n oper -> return $! fromString ("vendor" ++ show n ++ oper) -- ??
 
-showType :: CXXType -> Pretty Builder
+showType :: (Monad m, MonadThrow m) => CXXType -> Pretty m Builder
 showType t =
   case t of
     QualifiedType qs t' -> do
@@ -448,7 +502,7 @@ showType t =
     AutoType -> return $! fromString "auto"
     NullPtrType -> return $! fromString "std::nullptr_t"
     VendorBuiltinType s -> return $! fromString s
-    FunctionType _ -> error "Only pointers to function types are supported"
+    FunctionType _ -> throwM NonPointerFunctionType
     ExternCFunctionType ts -> do
       tb <- showFunctionType ts
       let r = fromString "extern \"C\" " `mappend` tb
@@ -468,8 +522,19 @@ showType t =
       r <- showPtrToMember c m
       return $! r
     SubstitutionType s -> showSubstitution s
+    TemplateParamType t -> showTemplateParam t  -- needs recording!
 
-showSubstitution :: Substitution -> Pretty Builder
+-- | The NonPointerFunctionType exception is thrown when attempting to
+-- pretty-print a function type that is not a pointer.  First-class
+-- function types are not supported at this time.  This is a logic
+-- error in the library?
+
+data NonPointerFunctionType = NonPointerFunctionType
+instance Exception NonPointerFunctionType
+instance Show NonPointerFunctionType where
+    show _ = "Only pointers to function types are supported"
+
+showSubstitution :: (Monad m, MonadThrow m) => Substitution -> Pretty m Builder
 showSubstitution s =
   case s of
     Substitution ss -> getSubstitution ss
@@ -481,7 +546,11 @@ showSubstitution s =
     SubBasicOstream -> return $! fromString "std::basic_ostream<char, std::char_traits<char> >"
     SubBasicIostream -> return $! fromString "std::basic_iostream<char, std::char_traits<char> >"
 
-showPtrToMember :: CXXType -> CXXType -> Pretty Builder
+showTemplateParam :: Monad m => TemplateParam -> Pretty m Builder
+showTemplateParam t = return $! fromString $ show t  -- KWQ
+
+showPtrToMember :: (Monad m, MonadThrow m)
+                => CXXType -> CXXType -> Pretty m Builder
 showPtrToMember (ClassEnumType n) (FunctionType (rt:argts)) = do
   rt' <- showType rt
   argts' <- mapM showType argts
@@ -490,12 +559,21 @@ showPtrToMember (ClassEnumType n) (FunctionType (rt:argts)) = do
                     , mconcat (intersperse (fromString ", ") argts')
                     , singleton ')'
                     ]
-showPtrToMember _ _ = error "Expected a ClassEnumType and FunctionType pair for PtrToMemberType"
+showPtrToMember _ _ = throwM BarePtrToMember
 
-showFunctionType :: [CXXType] -> Pretty Builder
+-- | The BarePtrToMember exception is thrown when there is not enough
+-- information to determine what the pointer should point to.  This is
+-- either a bad mangled name or an internal logic error.
+
+data BarePtrToMember = BarePtrToMember
+instance Exception BarePtrToMember
+instance Show BarePtrToMember where
+  show _ = "Expected a ClassEnumType and FunctionType pair for PtrToMemberType"
+
+showFunctionType :: (Monad m, MonadThrow m) => [CXXType] -> Pretty m Builder
 showFunctionType ts =
   case ts of
-    [] -> error "Empty type list in function type"
+    [] -> throwM EmptyFunctionType
     [rtype, VoidType] -> do
       rt' <- showType rtype
       return $! mconcat [ rt', fromString " (*)()" ]
@@ -504,6 +582,15 @@ showFunctionType ts =
       rbs <- mapM showType rest
       let arglist = mconcat $ intersperse (fromString ", ") rbs
       return $! mconcat [ tb, fromString " (*)(", arglist, singleton ')' ]
+
+-- | The EmptyFunctionType exception is thrown when there is no
+-- argument specification for the function.  This is either a bad
+-- mangled name or an internal logic error.
+
+data EmptyFunctionType = EmptyFunctionType
+instance Exception EmptyFunctionType
+instance Show EmptyFunctionType where
+  show _ = "Empty type list in function type"
 
 -- Helpers
 

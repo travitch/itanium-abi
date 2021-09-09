@@ -13,11 +13,10 @@ module ABI.Itanium.Pretty (
 import Control.Monad ( foldM, void )
 import Control.Monad.Catch ( Exception, MonadThrow, throwM )
 import Control.Monad.Trans.State.Strict
-import Data.Char ( digitToInt )
-import Data.List ( foldl', intersperse )
+import Data.Char ( ord )
+import Data.List ( intersperse )
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
-import Data.Monoid
 import Data.Text.Lazy ( Text, unpack, unsnoc )
 import Data.Text.Lazy.Builder
 
@@ -86,8 +85,10 @@ getSubstitution s = do
     -- This case always adds 1 from the number because the
     -- Nothing case is index zero
     Just ix ->
-      let n = numberValue 36 ix  -- seq ID is base 36
-      in lookupError (n+1) st
+      -- seq ID is base 36
+      case numberValue 36 ix of
+        Just n -> lookupError (n+1) st
+        Nothing -> errMsg
   where
     errMsg = throwM $ MissingSubstitution s
     lookupError k m = maybe errMsg return (HM.lookup k m)
@@ -595,6 +596,10 @@ instance Show EmptyFunctionType where
 -- Helpers
 
 -- Taken from parsec-numbers
-numberValue :: Integral i => Int -> String -> i
+numberValue :: Integral i => Int -> String -> Maybe i
 numberValue base =
-  foldl' (\ x -> ((fromIntegral base * x) +) . fromIntegral . digitToInt) 0
+  let seqIdToNum seqId | seqId >= ord 'A' && seqId <= ord 'Z' = Just $ seqId - ord 'A' + 10
+                       | seqId >= ord '0' && seqId <= ord '9' = Just $ seqId - ord '0'
+                       | otherwise = Nothing
+  in
+    foldM (\ x -> fmap (((fromIntegral base * x) +) . fromIntegral) . seqIdToNum . ord) 0

@@ -74,6 +74,11 @@ topLevelEntity =
     rOverrideThunk . lit "T" . callOffset . topLevelEntity <>
     rOverrideThunkCovariant . lit "Tc" . callOffset . callOffset . topLevelEntity <>
     rConstStructData . lit "L" . unqualifiedName <>
+
+    -- The following is a "static" function definition, but c++filt
+    -- doesn't reproduce the "static" part.
+    rFunction . lit "L" . name . bareFunctionType <>
+
     rFunction . name . bareFunctionType <>
     rData . name
   )

@@ -48,6 +48,7 @@ $(makeBoomerangs ''Substitution)
 $(makeBoomerangs ''UName)
 $(makeBoomerangs ''TemplateArg)
 $(makeBoomerangs ''TemplateParam)
+$(makeBoomerangs ''ExprPrimary)
 
 -- | Demangle a name into a structured representation (or an error
 -- string)
@@ -74,6 +75,11 @@ topLevelEntity =
     rOverrideThunk . lit "T" . callOffset . topLevelEntity <>
     rOverrideThunkCovariant . lit "Tc" . callOffset . callOffset . topLevelEntity <>
     rConstStructData . lit "L" . unqualifiedName <>
+
+    -- The following is a "static" function definition, but c++filt
+    -- doesn't reproduce the "static" part.
+    rFunction . lit "L" . name . bareFunctionType <>
+
     rFunction . name . bareFunctionType <>
     rData . name
   )
@@ -256,7 +262,13 @@ templateArgs :: Boomerang StringError String a ([TemplateArg] :- a)
 templateArgs = lit "I" . rList1 templateArg . lit "E"
 
 templateArg :: Boomerang StringError String a (TemplateArg :- a)
-templateArg = rTypeTemplateArg . cxxType
+templateArg = (rTypeTemplateArg . cxxType <>
+               lit "L" . rExprPrimaryTemplateArg . exprPrimary . lit "E"
+              )
+
+exprPrimary :: Boomerang (ParserError MajorMinorPos) String a (ExprPrimary :- a)
+exprPrimary = (rExprIntLit . cxxType . abiInt )
+
 
 templateParam :: Boomerang StringError String a (TemplateParam :- a)
 templateParam = ( rTemplateParam . lit "T" . rMaybe int . lit "_" )

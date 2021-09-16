@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 module ABI.Itanium.Pretty (
   cxxNameToString,
   cxxNameToText,
@@ -242,6 +243,16 @@ showTArg :: (Monad m, MonadThrow m) => TemplateArg -> Pretty m Builder
 showTArg ta =
   case ta of
     TypeTemplateArg t -> showType t
+    ExprPrimaryTemplateArg ep -> showExprPrimary ep
+
+showExprPrimary :: (Monad m, MonadThrow m) => ExprPrimary -> Pretty m Builder
+showExprPrimary =
+  let parenShowType ty = do sty <- showType ty
+                            return $ mconcat [singleton '(', sty, singleton ')']
+  in \case
+    ExprIntLit ty intval -> do sty <- parenShowType ty
+                               return $! mconcat [ sty
+                                                 , fromString $ show intval ]
 
 -- pass the current prefix builder down so that it can be added to and
 -- stored for substitutions

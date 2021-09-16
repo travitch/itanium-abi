@@ -13,7 +13,8 @@ module ABI.Itanium.Types (
   CallOffset(..),
   Substitution(..),
   TemplateArg(..),
-  TemplateParam(..)
+  TemplateParam(..),
+  ExprPrimary(..)
   ) where
 
 import Data.Data
@@ -164,10 +165,20 @@ data Prefix = DataMemberPrefix String
             deriving (Eq, Ord, Show, Data, Typeable)
 
 data TemplateArg = TypeTemplateArg CXXType
+                 | ExprPrimaryTemplateArg ExprPrimary
                  deriving (Eq, Ord, Show, Data, Typeable)
 
 data TemplateParam = TemplateParam (Maybe Int)
                    deriving (Eq, Ord, Show, Data, Typeable)
+
+data ExprPrimary = ExprIntLit CXXType Int
+                 | ExprFloatLit CXXType Float
+                 | ExprStringLit String
+                 | ExprNullPtrLit -- ?
+                 | ExprNullPointerTemplateArg
+                 | ExprComplexFloatLit CXXType Float Float
+                 | ExprExternName DecodedName
+                     deriving (Eq, Ord, Show, Data, Typeable)
 
 data UnqualifiedName = OperatorName Operator
                      | CtorDtorName CtorDtor

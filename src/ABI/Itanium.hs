@@ -249,9 +249,13 @@ substitution = (
                  rSubBasicOstream . lit "So" <>
                  rSubBasicIostream . lit "Sd"
                )
-  where seq_id = rList1 (satisfy (\c -> and [ c /= '_'
-                                            , (isAsciiUpper c || isDigit c)
-                                            ]))
+
+-- | Reads the sequence ID of a Substitution parameter or Template
+-- Argument parameter
+seq_id :: Boomerang StringError String a ([Char] :- a)
+seq_id = rList1 (satisfy (\c -> and [ c /= '_'
+                                    , (isAsciiUpper c || isDigit c)
+                                    ]))
 
 unscopedName :: Boomerang StringError String a (UName :- a)
 unscopedName = ( rUStdName . lit "St" . unqualifiedName <>
@@ -271,7 +275,7 @@ exprPrimary = (rExprIntLit . cxxType . abiInt )
 
 
 templateParam :: Boomerang StringError String a (TemplateParam :- a)
-templateParam = ( rTemplateParam . lit "T" . rMaybe int . lit "_" )
+templateParam = ( rTemplateParam . lit "T" . rMaybe seq_id . lit "_" )
 
 -- | Parse a length-prefixed string (does not handle newlines)
 sourceName :: Boomerang (ParserError MajorMinorPos) String a (String :- a)

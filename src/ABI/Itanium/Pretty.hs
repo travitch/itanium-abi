@@ -349,20 +349,6 @@ showTArgs targs = do
   tns <- mapM showTArg targs
   return $! mconcat $! intersperse (fromString ", ") tns
 
-showPrefixedTArgs :: (Monad m, MonadThrow m)
-                  => [Prefix] -> [TemplateArg] -> Pretty m Builder
-showPrefixedTArgs = go mempty
-  where
-    go acc pfxs targs =
-      case pfxs of
-        [] -> do
-          tns <- mapM showTArg targs
-          let allTns = mconcat $ intersperse (fromString ", ") tns
-          return $! acc `mappend` templateBracket allTns
-        pfx : rest -> do
-          nextAcc <- showPrefix acc pfx
-          go nextAcc rest targs
-
 showTArg :: (Monad m, MonadThrow m) => TemplateArg -> Pretty m Builder
 showTArg ta =
   case ta of
@@ -596,19 +582,19 @@ showType t =
                        , singleton ')'
                        ]
       r <- showFunctionType ts
-      recordSubstitution r
+      recordSubstitution $! r
     PointerToType t' -> do
       tb <- showType t'
       let r = tb `mappend` singleton '*'
-      recordSubstitution r
+      recordSubstitution $! r
     ReferenceToType t' -> do
       tb <- showType t'
       let r = tb `mappend` singleton '&'
-      recordSubstitution r
+      recordSubstitution $! r
     RValueReferenceToType t' -> do
       tb <- showType t'
       let r = tb `mappend` fromString "&&"
-      recordSubstitution r
+      recordSubstitution $! r
     ComplexPairType t' -> do
       tb <- showType t'
       let r = tb `mappend` fromString " complex"

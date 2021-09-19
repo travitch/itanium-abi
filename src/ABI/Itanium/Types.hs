@@ -168,7 +168,7 @@ data TemplateArg = TypeTemplateArg CXXType
                  | ExprPrimaryTemplateArg ExprPrimary
                  deriving (Eq, Ord, Show, Data, Typeable)
 
-data TemplateParam = TemplateParam (Maybe Int)
+data TemplateParam = TemplateParam (Maybe String)
                    deriving (Eq, Ord, Show, Data, Typeable)
 
 data ExprPrimary = ExprIntLit CXXType Int

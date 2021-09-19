@@ -460,7 +460,14 @@ showType t =
       -- stub will never be referenced because function types aren't
       -- first-class
       ts' <- mapM showType ts
-      recordSubstitution' (mconcat ts')
+      if null ts'
+        then return()
+        else recordSubstitution'
+             $ mconcat [ head ts'
+                       , fromString " ("
+                       , mconcat $ intersperse (fromString ", ") $ tail ts'
+                       , singleton ')'
+                       ]
       r <- showFunctionType ts
       recordSubstitution r
     PointerToType t' -> do

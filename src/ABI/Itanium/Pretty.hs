@@ -123,31 +123,11 @@ cxxNameToString = fmap unpack . cxxNameToText
 dispatchTopLevel :: (Monad m, MonadThrow m) => DecodedName -> Pretty m Builder
 dispatchTopLevel n =
   case n of
-    Function (NestedName qs@(_:_) pfxs uname) argTypes -> do
-      pn <- showPrefixedName pfxs uname
-      dropLastSubstitution
-      argBuilders <- case argTypes of
-        [VoidType] -> return mempty
-        _ -> mapM showType argTypes
-      quals <- showQualifiers pn qs
-      return $! mconcat [ pn
-                        , singleton '('
-                        , mconcat $ intersperse (fromString ", ") argBuilders
-                        , fromString ") "
-                        ] `mappend` quals
-    Function fname argTypes -> do
-      nameBuilder <- showName fname
-      dropLastSubstitution
-      argBuilders <- case argTypes of
-        [VoidType] -> return mempty
-        _ -> mapM showType argTypes
-      return $! mconcat [ nameBuilder
-                        , singleton '('
-                        , mconcat $ intersperse (fromString ", ") argBuilders
-                        , singleton ')'
-                        ]
+    Function fname argTypes -> showFunction fname argTypes
     ConstStructData varName -> showUnqualifiedName varName
-    Data varName -> showName varName
+    Data varName -> do nm <- showName varName
+                       qual <- showNameQualifiers nm varName
+                       return $! mconcat [nm, qual]
     VirtualTable t -> do
       tb <- showType t
       return $! mconcat [ fromString "vtable for ", tb ]
@@ -162,13 +142,57 @@ dispatchTopLevel n =
       return $! mconcat [ fromString "typeinfo name for ", tb ]
     GuardVariable vname -> do
       vn <- showName vname
-      return $! mconcat [ fromString "guard variable for ", vn ]
+      vq <- showNameQualifiers vn vname
+      return $! mconcat [ fromString "guard variable for ", vn, vq ]
     OverrideThunk _ target -> do
       tn <- dispatchTopLevel target
       return $! mconcat [ fromString "non-virtual thunk to ", tn ]
     OverrideThunkCovariant _ _ target -> do
       tn <- dispatchTopLevel target
       return $! mconcat [ fromString "virtual thunk to ", tn ]
+
+-- | Show a Function and its arguments.  Function representation has
+-- several rules:
+--
+--   1. template functions have return types with some exceptions
+--
+--   2. function types which are not part of a function name
+--      mangling have return types with some exceptions
+--
+--   3. non-template function names do not have return types
+--
+-- The exceptions are that constructors, destructors, and conversion
+-- operators do not have return types.
+showFunction :: (Monad m, MonadThrow m)
+             => Name -> [CXXType] -> Pretty m Builder
+showFunction fname args =
+  let (retType:retArgTypes) = args
+      argTypes = if hasRetType fname then retArgTypes else args
+  in do nameBuilder <- showName fname
+        dropLastSubstitution
+        retSpec <- if hasRetType fname
+                   then do p <- case args of
+                                  [] -> return $ fromString "void"
+                                  _ -> showType retType
+                           return $! mconcat [ p, singleton ' ' ]
+                   else return $! mempty
+        argBuilders <- case argTypes of
+          [VoidType] -> return mempty
+          _ -> mapM showType argTypes
+        let argSpec = mconcat
+                      $ intersperse (fromString ", ") argBuilders
+        quals <- showNameQualifiers mempty fname
+        return $! mconcat [ retSpec
+                          , nameBuilder
+                          , singleton '(' , argSpec , singleton ')'
+                          , quals
+                          ]
+
+hasRetType :: Name -> Bool
+hasRetType = \case
+  NestedTemplateName {} -> True
+  UnscopedTemplateName{} -> True
+  _ -> False
 
 -- -- | There is a specific parse rule in older C++ that two
 -- -- consecutive template closure brackets have to be separated by a
@@ -188,20 +212,14 @@ templateBracket tmpltArgs =
 showName :: (Monad m, MonadThrow m) => Name -> Pretty m Builder
 showName n =
   case n of
-    NestedName qs pfxs uname -> do
+    NestedName _ pfxs uname -> do
       pn <- showPrefixedName pfxs uname
-      recordSubstitution' pn
-      case null qs of
-        False -> mappend (mconcat [ pn, singleton ' ' ]) <$> showQualifiers pn qs
-        True -> return $! pn
+      recordSubstitution pn
     UnscopedName uname -> showUName uname
-    NestedTemplateName [] pfxs targs ->
-      showPrefixedTArgs pfxs targs >>= recordSubstitution
-    NestedTemplateName qs pfxs targs -> do
-      pn <- showPrefixedTArgs pfxs targs
-      recordSubstitution' pn
-      quals <- showQualifiers pn qs
-      return $! mconcat [ pn, singleton ' ' ] `mappend` quals
+    NestedTemplateName _ pfxs targs -> do
+      p <- showPrefixes pfxs
+      t <- templateBracket <$> showTArgs targs
+      recordSubstitution $! mappend p t
     UnscopedTemplateName uname targs -> do
       un <- showUName uname
       recordSubstitution' un
@@ -219,6 +237,15 @@ showUName u =
     UStdName uname -> do
       un <- showUnqualifiedName uname
       return (fromString "std::" `mappend` un)
+
+showNameQualifiers :: (Monad m)
+                   => Builder -> Name -> Pretty m Builder
+showNameQualifiers pn = \case
+  NestedName qs@(_:_) _ _ ->
+    mappend (mconcat [ pn, singleton ' ' ]) <$> showQualifiers pn qs
+  NestedTemplateName qs@(_:_) _ _ ->
+    mappend (mconcat [ pn, singleton ' ' ]) <$> showQualifiers pn qs
+  _ -> return mempty
 
 showTArgs :: (Monad m, MonadThrow m) => [TemplateArg] -> Pretty m Builder
 showTArgs targs = do
@@ -345,6 +372,9 @@ showQualifier (accum,res) q = do
   return $! (acc', res')
 
 
+showPrefixes :: (Monad m, MonadThrow m) => [Prefix] -> Pretty m Builder
+showPrefixes = foldM showPrefix mempty
+
 -- | These are outer namespace/class name qualifiers, so convert them
 -- to strings followed by ::
 showPrefix :: (Monad m, MonadThrow m) => Builder -> Prefix -> Pretty m Builder
@@ -360,10 +390,10 @@ showPrefix prior pfx =
        SubstitutionPrefix s -> addPrior False =<< showSubstitution s
        TemplateArgsPrefix args ->
          case prior == mempty of
-           True -> showPrefixedTArgs [] args >>= recordSubstitution
+           True -> (templateBracket <$> showTArgs args) >>= recordSubstitution
            False -> do recordSubstitution' prior
-                       targs <- showPrefixedTArgs [] args
-                       let this = mconcat [ prior, targs ]
+                       targs <- showTArgs args
+                       let this = mconcat [ prior, templateBracket targs ]
                        recordSubstitution this
 
 showUnqualifiedName :: (Monad m, MonadThrow m)
@@ -529,7 +559,8 @@ showType t =
       return $! r
     ClassEnumType n -> do
       r <- showName n
-      recordSubstitution r
+      q <- showNameQualifiers r n
+      recordSubstitution $! mconcat [r, q]
     PtrToMemberType c m -> do
       r <- showPtrToMember c m
       return $! r
@@ -567,7 +598,8 @@ showPtrToMember (ClassEnumType n) (FunctionType (rt:argts)) = do
   rt' <- showType rt
   argts' <- mapM showType argts
   nb <- showName n
-  return $! mconcat [ rt', fromString " (", nb , fromString "::*)("
+  q <- showNameQualifiers nb n
+  return $! mconcat [ rt', fromString " (", nb, q , fromString "::*)("
                     , mconcat (intersperse (fromString ", ") argts')
                     , singleton ')'
                     ]

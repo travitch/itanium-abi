@@ -131,8 +131,11 @@ cxxType = ( rQualifiedType . rList1 cvQualifier . cxxType <>
             rFunctionType . lit "F" . bareFunctionType . lit "E" <>
             rArrayTypeN . lit "A" . rMaybe int . lit "_" . cxxType <>
             rPtrToMemberType . lit "M" . cxxType . cxxType <>
+
             rSubstitutionType . substitution <>
-            rClassEnumType . name
+            rClassEnumType . name <>
+            rTemplateParamType . templateParam
+
             -- Still need: array-type (E), decltype
           )
 

@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+
 module ABI.Itanium.Pretty (
   cxxNameToString,
   cxxNameToText,
@@ -11,28 +12,42 @@ module ABI.Itanium.Pretty (
   EmptyFunctionType
   ) where
 
-import Control.Monad ( foldM, void )
+import Control.Monad ( foldM, unless, void )
 import Control.Monad.Catch ( Exception, MonadThrow, throwM )
 import Control.Monad.Trans.State.Strict
 import Data.Char ( ord )
 import Data.List ( intersperse )
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
+import Data.Maybe ( catMaybes )
 import Data.Text.Lazy ( Text, unpack, unsnoc )
 import Data.Text.Lazy.Builder
 
 import ABI.Itanium.Types
 
--- | The Pretty type maintains the substitution table used for
--- emitting a demangled names.  For compression, demangling allows the
--- use of "substitutions" to refer to previously emitted portions of
--- the name.  Most portions of the name that are emitted are recorded
+
+-- | The Store maintains the substitution table used for emitting a
+-- demangled names.  For compression, demangling allows the use of
+-- "substitutions" to refer to previously emitted portions of the
+-- name.  Most portions of the name that are emitted are recorded
 -- (with compositional buildup: @foo::bar@ will record both @foo@ and
 -- @foo::bar@).  The only exceptions to recording are function names
 -- and builtin types.  As a name is demangled, each portion will be
 -- added to this table for use in subsequent substitutions.
 
-type Pretty = StateT (HashMap Int Builder)
+data Store = Store { substitutions :: HashMap Int Builder
+                   , templateArgs :: [Maybe Builder]
+                   }
+
+emptyStore :: Store
+emptyStore = Store mempty mempty
+
+-- | The Pretty type is used as the main State object for performing
+-- conversion to pretty output with the Store as the internal state.
+
+type Pretty = StateT Store
+
+----------------------------------------------------------------------
 
 -- | Records a substitution component in the current table, skipping
 -- any duplications.
@@ -42,13 +57,26 @@ type Pretty = StateT (HashMap Int Builder)
 -- record and return the generated output.
 recordSubstitution :: Monad m => Builder -> Pretty m Builder
 recordSubstitution b = do
-  s <- get
+  store <- get
+  let s = substitutions store
   case b `elem` HM.elems s of
     False -> do
       let n = HM.size s
-      put $! HM.insert n b s
+      let store' = store { substitutions = HM.insert n b s }
+      put $! store'
       return b
     True -> return b
+
+-- | Called for special cases where a substitution should be recorded,
+-- even if it is a duplicate of another already-recorded substitution.
+recordSubstitutionAlways :: Monad m => Builder -> Pretty m Builder
+recordSubstitutionAlways b = do
+  store <- get
+  let s = substitutions store
+  let n = HM.size s
+  let store' = store { substitutions = HM.insert n b s }
+  put $! store'
+  return b
 
 -- | This is a convenience wrapper for 'recordSubstitution' that will
 -- return a void value; this can be used where the results of the
@@ -73,14 +101,17 @@ recordSubstitution' = void . recordSubstitution
 -- then this function is called to drop the last element recorded,
 -- which is the actual function name.
 dropLastSubstitution :: Monad m => Pretty m ()
-dropLastSubstitution = modify $ \s -> HM.delete ((HM.size s) - 1) s
+dropLastSubstitution = modify $ \store ->
+  let s = substitutions store
+      s' = HM.delete ((HM.size s) - 1) s
+  in store { substitutions = s' }
 
 -- | Lookup a recorded substitution and return it.  A lookup failure
 -- means either a malformed mangled name (unlikely) or a logic error
 -- below that did not properly record a substitution component.
 getSubstitution :: (Monad m, MonadThrow m) => Maybe String -> Pretty m Builder
 getSubstitution s = do
-  st <- get
+  st <- gets substitutions
   case s of
     Nothing -> lookupError 0 st
     -- This case always adds 1 from the number because the
@@ -100,11 +131,104 @@ getSubstitution s = do
 -- this Pretty implementation.
 
 data MissingSubstitution = MissingSubstitution (Maybe String)
-
 instance Exception MissingSubstitution
 instance Show MissingSubstitution where
   show (MissingSubstitution s) = "No substitution found for " ++ show s
 
+
+
+----------------------------------------------------------------------
+-- * Template Argument handling
+--
+-- Template arguments are different than substitutions in that they
+-- are numbered when the template opening character '<' is
+-- seen/emitted, but the actual argument itself cannot be stored until
+-- the closing character '>' is reached.  This means that if the
+-- template argument itself contains template arguments, the arguments
+-- processed during the recursion must follow the current argument.
+--
+--  Example:
+--
+--   foo<std::basic_string<char, std::char_traits<char>, std::allocator<char> > >
+--       ^                 ^     ^                ^                     ^
+--       |                 |     |                `-dup of T1, ignored--'
+--       |                 T1    T2--------------------  T3------------------
+--       T0--------------------------------------------------------------------
+--
+-- Further sophistication is needed to handle the case where
+-- duplicates are observed.  For example, after T1 above, the '<'
+-- following the char_traits reserves another template argument
+-- position, but then when the '>' is reached, it can determine that
+-- it's a duplicate and doesn't need to be recorded.  This is fine if
+-- there were no other args recorded after the '<' and before the '>',
+-- but consider the case where T0 might be discovered to be a
+-- duplicate.  To resolve this, the template argument reservation adds
+-- a Nothing to the reservation array, but lookups by index ignore
+-- Nothing entries.
+
+newtype ReservedTemplateArgument = RTA Int
+
+-- | Reserves a template argument location
+reserveTemplateArgument :: Monad m => Pretty m ReservedTemplateArgument
+reserveTemplateArgument = do
+  store <- get
+  let tas = templateArgs store
+      nta = length tas
+  put $! store { templateArgs = templateArgs store <> [ Nothing ] }
+  return $! RTA nta
+
+
+-- | Records a template argument in the current table, skipping any
+-- duplications.  Returns the input as a convenience pass-through.
+recordTemplateArgument :: Monad m
+                       => ReservedTemplateArgument -> Builder -> Pretty m Builder
+recordTemplateArgument (RTA i) b = do
+  store <- get
+  let tas = templateArgs store
+  unless (i < length tas) $
+    error "INVALID TEMPLATE ARG RESERVATION: CODING ERROR"
+  let (pre,_:post) = splitAt i tas
+  if Just b `elem` pre
+    then return $! b
+    else do let store' = store { templateArgs = pre <> [ Just b ] <> post }
+            put $! store'
+            return $! b
+
+
+-- | Lookup a recorded template argument and return it.  A lookup failure
+-- means either a malformed mangled name (unlikely) or a logic error
+-- below that did not properly record a substitution component.
+getTemplateArgument :: (Monad m, MonadThrow m)
+                    => Maybe String -> Pretty m Builder
+getTemplateArgument s = do
+  st <- catMaybes <$> gets templateArgs
+  case s of
+    Nothing -> lookupError 0 st
+    -- This case always adds 1 from the number because the
+    -- Nothing case is index zero
+    Just ix ->
+      -- seq ID is base 36
+      case numberValue 36 ix of
+        Just n -> lookupError (n+1) st
+        Nothing -> errMsg
+  where
+    errMsg = throwM $ MissingTemplateArgument s
+    lookupError k m = if k < length m
+                      then return $ m !! k
+                      else errMsg
+
+-- | The MissingTemplateArgument exception is thrown when the mangled name
+-- requests a template argument that cannot be found.  This indicates
+-- either an invalid mangled name or else an internal logic error in
+-- this Pretty implementation.
+
+data MissingTemplateArgument = MissingTemplateArgument (Maybe String)
+instance Exception MissingTemplateArgument
+instance Show MissingTemplateArgument where
+  show (MissingTemplateArgument s) = "No template argument found for " ++ show s
+
+
+----------------------------------------------------------------------
 
 -- | Primary interface to get the pretty version of a parsed mangled
 -- name in Text form.  This is a monadic operation to support throwing
@@ -112,7 +236,7 @@ instance Show MissingSubstitution where
 -- conversion error.
 
 cxxNameToText :: (Monad m, MonadThrow m) => DecodedName -> m Text
-cxxNameToText n = toLazyText <$> evalStateT (dispatchTopLevel n) mempty
+cxxNameToText n = toLazyText <$> evalStateT (dispatchTopLevel n) emptyStore
 
 -- | Primary interface to get the pretty version of a parsed mangled
 -- name in String form.
@@ -242,7 +366,10 @@ showPrefixedTArgs = go mempty
 showTArg :: (Monad m, MonadThrow m) => TemplateArg -> Pretty m Builder
 showTArg ta =
   case ta of
-    TypeTemplateArg t -> showType t
+    TypeTemplateArg t -> do tnum <- reserveTemplateArgument
+                            tt <- showType t
+                            void $ recordTemplateArgument tnum tt
+                            return tt
     ExprPrimaryTemplateArg ep -> showExprPrimary ep
 
 showExprPrimary :: (Monad m, MonadThrow m) => ExprPrimary -> Pretty m Builder
@@ -541,7 +668,7 @@ showType t =
       r <- showPtrToMember c m
       return $! r
     SubstitutionType s -> showSubstitution s
-    TemplateParamType t -> showTemplateParam t  -- needs recording!
+    TemplateParamType tt -> showTemplateParam tt
 
 -- | The NonPointerFunctionType exception is thrown when attempting to
 -- pretty-print a function type that is not a pointer.  First-class
@@ -565,8 +692,9 @@ showSubstitution s =
     SubBasicOstream -> return $! fromString "std::basic_ostream<char, std::char_traits<char> >"
     SubBasicIostream -> return $! fromString "std::basic_iostream<char, std::char_traits<char> >"
 
-showTemplateParam :: Monad m => TemplateParam -> Pretty m Builder
-showTemplateParam t = return $! fromString $ show t  -- KWQ
+showTemplateParam :: (Monad m, MonadThrow m) => TemplateParam -> Pretty m Builder
+showTemplateParam (TemplateParam t) = do r <- getTemplateArgument t
+                                         recordSubstitutionAlways r
 
 showPtrToMember :: (Monad m, MonadThrow m)
                 => CXXType -> CXXType -> Pretty m Builder

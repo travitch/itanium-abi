@@ -390,9 +390,14 @@ showExprPrimary =
   let parenShowType ty = do sty <- showType ty
                             return $ mconcat [singleton '(', sty, singleton ')']
   in \case
-    ExprIntLit ty intval -> do sty <- parenShowType ty
-                               return $! mconcat [ sty
-                                                 , fromString $ show intval ]
+    ExprIntLit ty intval ->
+      case ty of
+        BoolType
+          | intval == 0 -> return $! fromString "false"
+          | intval == 1 -> return $! fromString "true"
+        _ -> do sty <- parenShowType ty
+                return $! mconcat [ sty
+                                  , fromString $ show intval ]
 
 -- pass the current prefix builder down so that it can be added to and
 -- stored for substitutions

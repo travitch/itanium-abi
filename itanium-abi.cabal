@@ -2,12 +2,12 @@
 -- documentation, see http://haskell.org/cabal/users-guide/
 
 name: itanium-abi
-version: 0.1.1.1.99
+version: 0.1.2
 synopsis: An implementation of name mangling/demangling for the Itanium ABI
 license: BSD3
 license-file: LICENSE
 author: Tristan Ravitch
-maintainer: tristan@nochair.net
+maintainer: tristan@ravit.ch
 category: Development
 build-type: Simple
 cabal-version: >=1.10

@@ -10,7 +10,7 @@ author: Tristan Ravitch
 maintainer: tristan@ravit.ch
 category: Development
 build-type: Simple
-cabal-version: >=1.10
+cabal-version: 1.18
 tested-with: GHC == 7.4.2, GHC == 7.6.3, GHC == 7.8.4, GHC == 7.10.3, GHC == 8.0.2, GHC == 8.2.2, GHC == 8.4.4
 description: Currently supports everything in the standard but templates
              and C++11.  Support for these will be added.  Includes a name

@@ -1,3 +1,9 @@
+## 0.1.3 (2025-02-17)
+
+### Improvements
+
+- Allow building with GHC-9.8
+
 ## 0.1.2 (2023-03-23)
 
 ### Features / Improvements
